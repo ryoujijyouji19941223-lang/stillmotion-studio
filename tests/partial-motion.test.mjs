@@ -64,6 +64,8 @@ test('brush corrections are preserved and unsafe values are clamped', () => {
     points: [{ x: 0, y: 30 }]
   });
   assert.deepEqual(validateMotionRegion(region), []);
+  assert.equal(region.backgroundFill, true);
+  assert.equal(normalizeMotionRegion({ backgroundFill: false }).backgroundFill, false);
 });
 
 test('landscape image can fit fully inside a portrait canvas', () => {

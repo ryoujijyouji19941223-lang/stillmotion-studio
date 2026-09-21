@@ -38,6 +38,7 @@ canvas.selecting-region{cursor:crosshair;box-shadow:0 0 0 3px rgba(123,200,255,.
 .selection-notice{margin:9px 0;padding:9px 10px;border:1px solid #4789b2;border-radius:8px;background:#173246;color:#d8f2ff;font-size:12px;line-height:1.5}
 .selection-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:8px 0}
 .brush-editor{margin:10px 0;padding:10px;border:1px solid #354b5d;border-radius:9px;background:#151d27}.setting-subtitle{font-size:13px;font-weight:650}.erase-button.primary{background:#8a3e47;border-color:#be5965}.erase-button.primary:hover{background:#9f4853}
+.wide-button{width:100%;margin:5px 0}.mask-preview-help{margin:6px 0;padding:8px 10px;border-radius:8px;background:#eef4f7;color:#14202a;font-size:12px}.voice-recorder{margin:10px 0;padding:10px;border:1px solid #354b5d;border-radius:9px;background:#151d27}.recording-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}#recordNarrationBtn.recording{background:#a83240;border-color:#e05b69;box-shadow:0 0 0 3px rgba(224,91,105,.2)}
 .empty-state{margin-top:8px;padding:13px 10px;border:1px dashed #415064;border-radius:8px;color:var(--muted);font-size:12px;text-align:center}
 .motion-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}
 .danger-button{border-color:#6b3c43;color:#ffc6c6}

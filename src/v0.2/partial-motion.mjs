@@ -193,6 +193,7 @@ export function normalizeMotionRegion(input = {}, index = 0) {
     id: typeof input.id === 'string' && input.id ? input.id : `region-${index + 1}`,
     name: typeof input.name === 'string' && input.name ? input.name : `領域 ${index + 1}`,
     enabled: input.enabled !== false && hasKnownType,
+    backgroundFill: input.backgroundFill !== false,
     zIndex: Math.round(finiteNumber(input.zIndex, index)),
     mask: normalizeMask(input.mask),
     motion: normalizeMotion(input.motion)

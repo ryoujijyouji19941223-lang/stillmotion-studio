@@ -128,7 +128,10 @@
           <label>編集する範囲
             <select id="motionRegionSelect"></select>
           </label>
+          <button id="maskPreviewBtn" class="wide-button">◐ マスクだけ確認</button>
+          <p id="maskPreviewHelp" class="mask-preview-help" hidden>白い部分だけが動きます。黒い部分は固定されます。</p>
           <label class="check-row"><input id="motionEnabled" type="checkbox" /> この範囲を動かす</label>
+          <label class="check-row"><input id="backgroundFill" type="checkbox" checked /> 動いた跡を周囲の色でぼかして隠す</label>
           <div class="brush-editor">
             <div class="setting-subtitle">選択範囲を微調整</div>
             <div class="selection-actions">
@@ -177,6 +180,18 @@
       <div class="setting-group">
         <h3>音</h3>
         <button id="speakBtn">🔊 ブラウザ音声で試聴</button>
+        <div class="voice-recorder">
+          <div class="setting-subtitle">自分の声を入れる</div>
+          <div class="recording-actions">
+            <button id="recordNarrationBtn">● 録音開始</button>
+            <button id="stopNarrationBtn" disabled>■ 停止</button>
+          </div>
+          <div class="recording-actions">
+            <button id="previewNarrationBtn" disabled>▶ 音声を聞く</button>
+            <button id="clearNarrationBtn" class="danger-button" disabled>音声を外す</button>
+          </div>
+          <p id="recordingStatus" class="setting-help">シーンごとにマイクで録音できます。</p>
+        </div>
         <label>ナレーション音声ファイル
           <input id="narrationAudio" type="file" accept="audio/*" />
         </label>
