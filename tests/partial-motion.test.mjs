@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  calculateImagePlacement,
   canvasPointToSource,
   IDENTITY_TRANSFORM,
   evaluateMotion,
@@ -12,6 +13,36 @@ import {
   sourceRectToCanvas,
   validateMotionRegion
 } from '../src/v0.2/partial-motion.mjs';
+
+test('landscape image can fit fully inside a portrait canvas', () => {
+  const placement = calculateImagePlacement(
+    { width: 1080, height: 720 },
+    { width: 720, height: 960 },
+    'contain'
+  );
+
+  assert.deepEqual(placement, {
+    x: 0,
+    y: 240,
+    width: 720,
+    height: 480,
+    scale: 2 / 3,
+    fit: 'contain'
+  });
+});
+
+test('cover mode keeps the existing edge-cropping behavior', () => {
+  const placement = calculateImagePlacement(
+    { width: 1080, height: 720 },
+    { width: 720, height: 960 },
+    'cover'
+  );
+
+  assert.equal(placement.x, -360);
+  assert.equal(placement.y, 0);
+  assert.equal(placement.width, 1440);
+  assert.equal(placement.height, 960);
+});
 
 test('v0.1 scene gains an empty motionRegions array', () => {
   const original = { name: '表紙', image: 'sample/maru/01.webp' };

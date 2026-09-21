@@ -56,7 +56,7 @@ v0.1は依存ライブラリなしのHTML/CSS/JavaScriptで動く。v0.2プレ�
 }
 ```
 
-v0.2のシーンには、省略可能な `motionRegions` を追加する。空配列または未指定ならv0.1と同じ描画になる。
+v0.2のシーンには、省略可能な `motionRegions` と `imageFit` を追加する。空配列または未指定ならv0.1と同じ描画になる。`imageFit` は `cover`（画面を埋めて端を切る）または `contain`（全体表示＋ぼかし背景）を使う。
 
 ```json
 {

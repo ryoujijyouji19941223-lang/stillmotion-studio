@@ -1,4 +1,5 @@
 import {
+  calculateImagePlacement,
   canvasPointToSource,
   evaluateMotion,
   normalizeMotionRegion,
@@ -60,6 +61,7 @@ const state = {
       imageObjectUrl: null,
       narration: text,
       duration: estimateDuration(text),
+      imageFit: i === 2 ? 'contain' : 'cover',
       camera: 'none',
       textLock: true,
       effects: SAMPLE_EFFECTS[i],
@@ -123,7 +125,11 @@ async function loadImage(src){
 
 function coverPlacement(img,w,h,scene,t){
   const sw=img.naturalWidth, sh=img.naturalHeight;
-  let base = Math.max(w/sw,h/sh);
+  let base = calculateImagePlacement(
+    {width:sw,height:sh},
+    {width:w,height:h},
+    scene.imageFit
+  ).scale;
   let scale=base, dx=0, dy=0;
   if(!scene.textLock){
     const cam=scene.camera;
@@ -141,7 +147,24 @@ function coverPlacement(img,w,h,scene,t){
   return {x:x+dx,y:y+dy,width:dw,height:dh,scale};
 }
 
+function drawContainedBackdrop(img,w,h){
+  const backdrop=calculateImagePlacement(
+    {width:img.naturalWidth,height:img.naturalHeight},
+    {width:w,height:h},
+    'cover'
+  );
+  ctx.save();
+  ctx.filter='blur(24px) brightness(0.68) saturate(0.82)';
+  const bleed=1.08;
+  const width=backdrop.width*bleed,height=backdrop.height*bleed;
+  ctx.drawImage(img,(w-width)/2,(h-height)/2,width,height);
+  ctx.restore();
+  ctx.fillStyle='rgba(8,18,24,.16)';
+  ctx.fillRect(0,0,w,h);
+}
+
 function drawCover(img,w,h,scene,t){
+  if(scene.imageFit==='contain')drawContainedBackdrop(img,w,h);
   const placement=coverPlacement(img,w,h,scene,t);
   ctx.drawImage(img,placement.x,placement.y,placement.width,placement.height);
   return placement;
@@ -340,7 +363,7 @@ function syncMotionControls(scene){
 
 function syncControls(){
   const s=currentScene(); if(!s) return;
-  $('sceneName').value=s.name||'';$('narrationText').value=s.narration||'';$('durationInput').value=s.duration;$('cameraSelect').value=s.camera||'none';$('textLock').checked=!!s.textLock;$('effectStrength').value=s.effectStrength??.55;
+  $('sceneName').value=s.name||'';$('narrationText').value=s.narration||'';$('durationInput').value=s.duration;$('imageFitSelect').value=s.imageFit==='contain'?'contain':'cover';$('cameraSelect').value=s.camera||'none';$('textLock').checked=!!s.textLock;$('effectStrength').value=s.effectStrength??.55;
   [...document.querySelectorAll('[data-effect]')].forEach(el=>el.checked=(s.effects||[]).includes(el.dataset.effect));
   $('narrationAudioName').textContent=s.runtime?.narrationFile?.name||'未設定';$('ambientAudioName').textContent=s.runtime?.ambientFile?.name||'未設定';$('bgmAudioName').textContent=state.bgmFile?.name||'未設定';$('bgmVolume').value=state.project.bgmVolume??.35;
   $('sceneStatus').textContent=`${state.selected+1} / ${state.project.scenes.length}  ${s.name}`;$('timeLabel').textContent=`0.0 / ${s.duration.toFixed(1)} 秒`;$('scrubber').value=0;
@@ -457,6 +480,7 @@ function bindControls(){
   $('sceneName').oninput=e=>{currentScene().name=e.target.value;renderSceneList()};
   $('narrationText').oninput=e=>{currentScene().narration=e.target.value};
   $('durationInput').oninput=e=>{currentScene().duration=Math.max(1,+e.target.value||1);renderSceneList()};
+  $('imageFitSelect').onchange=e=>{currentScene().imageFit=e.target.value==='contain'?'contain':'cover';renderFrame(currentScene(),+$('scrubber').value/1000)};
   $('cameraSelect').onchange=e=>{currentScene().camera=e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000)};
   $('textLock').onchange=e=>{currentScene().textLock=e.target.checked;renderFrame(currentScene(),+$('scrubber').value/1000)};
   $('effectStrength').oninput=e=>{currentScene().effectStrength=+e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000)};
@@ -493,9 +517,9 @@ function bindControls(){
 }
 function ensureRuntime(s){if(!s.runtime)s.runtime={narrationFile:null,ambientFile:null};return s.runtime}
 function setResolution(v){const [w,h]=v.split('x').map(Number);state.project.width=w;state.project.height=h;canvas.width=w;canvas.height=h;renderFrame(currentScene(),+$('scrubber').value/1000)}
-function addBlankScene(){state.project.scenes.push({id:crypto.randomUUID(),name:`シーン${state.project.scenes.length+1}`,image:'',imageObjectUrl:null,narration:'',duration:5,camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}});selectScene(state.project.scenes.length-1)}
+function addBlankScene(){state.project.scenes.push({id:crypto.randomUUID(),name:`シーン${state.project.scenes.length+1}`,image:'',imageObjectUrl:null,narration:'',duration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}});selectScene(state.project.scenes.length-1)}
 function removeCurrentScene(){if(state.project.scenes.length<=1)return;state.project.scenes.splice(state.selected,1);state.selected=Math.min(state.selected,state.project.scenes.length-1);selectScene(state.selected)}
-function addImages(files){for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length)}
+function addImages(files){for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length)}
 
 function stopPlayback(){state.playToken++;state.playing=false;for(const a of state.audioPreview){try{a.pause()}catch{}}state.audioPreview=[]}
 async function previewCurrentMotion(){
@@ -533,7 +557,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 function serializableProject(){return {...state.project,scenes:state.project.scenes.map(({runtime,imageObjectUrl,...s})=>({...s,imageObjectUrl:null}))}}
 function saveProjectJson(){const blob=new Blob([JSON.stringify(serializableProject(),null,2)],{type:'application/json'});downloadBlob(blob,'stillmotion-project.json')}
-async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(s=>normalizeSceneMotion({...s,id:s.id||crypto.randomUUID(),runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;state.selectedMotionRegionId=null;setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0)}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
+async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(s=>normalizeSceneMotion({...s,id:s.id||crypto.randomUUID(),imageFit:s.imageFit==='contain'?'contain':'cover',runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;state.selectedMotionRegionId=null;setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0)}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
 
 async function decodeFile(ctx,file){if(!file)return null;return ctx.decodeAudioData(await file.arrayBuffer())}

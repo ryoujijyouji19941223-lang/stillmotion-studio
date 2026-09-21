@@ -59,6 +59,32 @@ export function rectFromPoints(start, end) {
   };
 }
 
+/**
+ * Calculates a centered image placement for a Canvas.
+ * "cover" fills the Canvas and may crop; "contain" keeps the whole image visible.
+ */
+export function calculateImagePlacement(imageSize, canvasSize, fit = 'cover') {
+  const imageWidth = positiveInteger(imageSize?.width, 1);
+  const imageHeight = positiveInteger(imageSize?.height, 1);
+  const canvasWidth = positiveInteger(canvasSize?.width, 1);
+  const canvasHeight = positiveInteger(canvasSize?.height, 1);
+  const normalizedFit = fit === 'contain' ? 'contain' : 'cover';
+  const scale = normalizedFit === 'contain'
+    ? Math.min(canvasWidth / imageWidth, canvasHeight / imageHeight)
+    : Math.max(canvasWidth / imageWidth, canvasHeight / imageHeight);
+  const width = imageWidth * scale;
+  const height = imageHeight * scale;
+
+  return {
+    x: (canvasWidth - width) / 2,
+    y: (canvasHeight - height) / 2,
+    width,
+    height,
+    scale,
+    fit: normalizedFit
+  };
+}
+
 /** Maps a Canvas point back to the original image coordinate system. */
 export function canvasPointToSource(point, placement, imageSize) {
   const scale = Math.max(Number.EPSILON, finiteNumber(placement?.scale, 1));
