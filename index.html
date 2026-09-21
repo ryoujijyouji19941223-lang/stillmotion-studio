@@ -111,9 +111,12 @@
         <div class="panel-title-row compact">
           <div>
             <h3>部分モーション <span class="preview-badge">試作</span></h3>
-            <p class="setting-help">画像の動かしたい場所を四角く囲みます。</p>
+            <p class="setting-help">四角、または輪郭をなぞって動かす場所を選びます。</p>
           </div>
-          <button id="selectRegionBtn" class="primary small">＋ 範囲を選ぶ</button>
+        </div>
+        <div class="selection-actions">
+          <button id="selectRegionBtn" class="small">＋ 四角で選ぶ</button>
+          <button id="selectFreeRegionBtn" class="small">＋ 自由に囲む</button>
         </div>
         <div id="selectionNotice" class="selection-notice" hidden>プレビュー画像の上をドラッグしてください。もう一度ボタンを押すと中止します。</div>
         <div id="motionEmpty" class="empty-state">まだ範囲がありません。</div>
@@ -163,10 +166,20 @@
           <input id="narrationAudio" type="file" accept="audio/*" />
         </label>
         <div id="narrationAudioName" class="muted">未設定</div>
+        <label>ナレーション音量 <output id="narrationVolumeValue">100%</output>
+          <input id="narrationVolume" type="range" min="0" max="1" value="1" step="0.05" />
+        </label>
         <label>このシーンの効果音 / 環境音
           <input id="ambientAudio" type="file" accept="audio/*" />
         </label>
         <div id="ambientAudioName" class="muted">未設定</div>
+        <label>環境音量 <output id="ambientVolumeValue">55%</output>
+          <input id="ambientVolume" type="range" min="0" max="1" value="0.55" step="0.05" />
+        </label>
+        <label>環境音を鳴らす長さ（秒）
+          <input id="ambientDuration" type="number" min="0.5" max="120" value="5" step="0.5" />
+        </label>
+        <p class="setting-help">雨・風の自動音と、読み込んだ環境音の両方に適用します。</p>
       </div>
 
       <div class="setting-group">
@@ -185,8 +198,8 @@
   </main>
 
   <footer>
-    <strong>v0.2 preview:</strong> 画像上を四角く選び、その範囲だけに小さな動きを付けられます。
-    <span>次: ブラシで木やカーテンの形に沿って選ぶ。</span>
+    <strong>v0.2 preview:</strong> 四角選択と自由選択で、画像の一部分だけに小さな動きを付けられます。
+    <span>音量と環境音の長さもシーンごとに調整できます。</span>
   </footer>
 
   <script type="module" src="app.js"></script>

@@ -9,10 +9,35 @@ import {
   motionPeriodSeconds,
   normalizeMotionRegion,
   normalizeSceneMotion,
+  polygonBounds,
   rectFromPoints,
   sourceRectToCanvas,
   validateMotionRegion
 } from '../src/v0.2/partial-motion.mjs';
+
+test('freehand polygon points are normalized and bounded', () => {
+  const region = normalizeMotionRegion({
+    mask: {
+      kind: 'polygon',
+      width: 1080,
+      height: 1440,
+      points: [{ x: 50, y: 80 }, { x: 240, y: 20 }, { x: 300, y: 250 }]
+    }
+  });
+
+  assert.deepEqual(region.mask.points, [
+    { x: 50, y: 80 },
+    { x: 240, y: 20 },
+    { x: 300, y: 250 }
+  ]);
+  assert.deepEqual(polygonBounds(region.mask.points), {
+    x: 50,
+    y: 20,
+    width: 250,
+    height: 230
+  });
+  assert.deepEqual(validateMotionRegion(region), []);
+});
 
 test('landscape image can fit fully inside a portrait canvas', () => {
   const placement = calculateImagePlacement(

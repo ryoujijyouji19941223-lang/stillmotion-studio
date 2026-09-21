@@ -44,6 +44,30 @@ function normalizeRect(rect = {}) {
   };
 }
 
+function normalizePoint(point = {}) {
+  return {
+    x: Math.max(0, finiteNumber(point.x, 0)),
+    y: Math.max(0, finiteNumber(point.y, 0))
+  };
+}
+
+export function polygonBounds(points = []) {
+  const normalized = points.map(normalizePoint);
+  if (!normalized.length) return null;
+  const xs = normalized.map(point => point.x);
+  const ys = normalized.map(point => point.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const maxX = Math.max(...xs);
+  const maxY = Math.max(...ys);
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(1, maxX - minX),
+    height: Math.max(1, maxY - minY)
+  };
+}
+
 /** Creates a positive rectangle from two points in the same coordinate space. */
 export function rectFromPoints(start, end) {
   const x1 = finiteNumber(start?.x, 0);
@@ -112,12 +136,16 @@ export function sourceRectToCanvas(rect, placement) {
 
 function normalizeMask(mask = {}) {
   const kind = MASK_TYPES.includes(mask.kind) ? mask.kind : 'rectangle';
+  const points = kind === 'polygon' && Array.isArray(mask.points)
+    ? mask.points.map(normalizePoint)
+    : [];
 
   return {
     kind,
     width: positiveInteger(mask.width, 1),
     height: positiveInteger(mask.height, 1),
     rect: kind === 'rectangle' ? normalizeRect(mask.rect) : null,
+    points,
     source: typeof mask.source === 'string' && mask.source ? mask.source : null,
     feather: clamp(finiteNumber(mask.feather, 0), 0, 128),
     invert: mask.invert === true
@@ -192,6 +220,10 @@ export function validateMotionRegion(input) {
     if (!(Number(input.mask.rect?.width) > 0) || !(Number(input.mask.rect?.height) > 0)) {
       errors.push('矩形マスクの幅と高さは0より大きい必要があります。');
     }
+  }
+
+  if (input.mask?.kind === 'polygon' && (!Array.isArray(input.mask.points) || input.mask.points.length < 3)) {
+    errors.push('自由選択には3点以上の輪郭が必要です。');
   }
 
   if (['paint', 'ai'].includes(input.mask?.kind) && !input.mask?.source) {

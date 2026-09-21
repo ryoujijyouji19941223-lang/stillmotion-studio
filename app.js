@@ -4,6 +4,7 @@ import {
   evaluateMotion,
   normalizeMotionRegion,
   normalizeSceneMotion,
+  polygonBounds,
   rectFromPoints,
   sourceRectToCanvas
 } from './src/v0.2/partial-motion.mjs';
@@ -61,6 +62,9 @@ const state = {
       imageObjectUrl: null,
       narration: text,
       duration: estimateDuration(text),
+      narrationVolume: 1,
+      ambientVolume: 0.55,
+      ambientDuration: estimateDuration(text),
       imageFit: i === 2 ? 'contain' : 'cover',
       camera: 'none',
       textLock: true,
@@ -81,8 +85,10 @@ const state = {
   playToken: 0,
   bgmFile: null,
   audioPreview: [],
+  generatedAmbient: [],
   selectedMotionRegionId: null,
   selectingRegion: false,
+  selectionKind: 'rectangle',
   selectionSession: null,
   selectionDraft: null,
   exporting: false
@@ -109,7 +115,7 @@ function particleSet(scene){
     rain: Array.from({length:180},()=>({x:r(),y:r(),len:.018+r()*.035,speed:.5+r()*1.2,alpha:.25+r()*.55})),
     leaves: Array.from({length:34},()=>({x:r(),y:r(),size:.008+r()*.014,speed:.025+r()*.045,drift:(r()-.5)*.12,rot:r()*6.28,phase:r()*6.28})),
     snow: Array.from({length:90},()=>({x:r(),y:r(),size:.002+r()*.006,speed:.02+r()*.04,phase:r()*6.28})),
-    dust: Array.from({length:65},()=>({x:r(),y:r(),size:.001+r()*.004,phase:r()*6.28,alpha:.12+r()*.35})),
+    dust: Array.from({length:90},()=>({x:r(),y:r(),size:.002+r()*.005,phase:r()*6.28,alpha:.28+r()*.42})),
     butterflies: Array.from({length:5},()=>({x:.55+r()*.4,y:.25+r()*.55,size:.01+r()*.014,phase:r()*6.28,speed:.025+r()*.025}))
   };
   state.particles.set(scene.id,p); return p;
@@ -185,12 +191,35 @@ function regionSourceRect(region,img){
   };
 }
 
+function regionSourceGeometry(region,img){
+  if(region.mask.kind==='rectangle'){
+    const bounds=regionSourceRect(region,img);
+    return bounds?{bounds,points:null}:null;
+  }
+  if(region.mask.kind!=='polygon'||region.mask.points.length<3)return null;
+  const fx=img.naturalWidth/Math.max(1,region.mask.width);
+  const fy=img.naturalHeight/Math.max(1,region.mask.height);
+  const points=region.mask.points.map(point=>({x:point.x*fx,y:point.y*fy}));
+  const bounds=polygonBounds(points);
+  return bounds?{bounds,points}:null;
+}
+
+function traceCanvasPolygon(points,placement){
+  if(!points?.length)return;
+  ctx.moveTo(placement.x+points[0].x*placement.scale,placement.y+points[0].y*placement.scale);
+  for(let i=1;i<points.length;i++){
+    ctx.lineTo(placement.x+points[i].x*placement.scale,placement.y+points[i].y*placement.scale);
+  }
+  ctx.closePath();
+}
+
 function drawPartialMotions(img,scene,placement,elapsedSeconds){
   for(const rawRegion of scene.motionRegions||[]){
     const region=normalizeMotionRegion(rawRegion);
     if(!region.enabled)continue;
-    const source=regionSourceRect(region,img);
-    if(!source||source.width<1||source.height<1)continue;
+    const geometry=regionSourceGeometry(region,img);
+    if(!geometry||geometry.bounds.width<1||geometry.bounds.height<1)continue;
+    const source=geometry.bounds;
     const dest=sourceRectToCanvas(source,placement);
     const motion=evaluateMotion(region,elapsedSeconds);
     const pivotX=dest.x+dest.width*region.motion.pivot.x;
@@ -198,7 +227,8 @@ function drawPartialMotions(img,scene,placement,elapsedSeconds){
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(dest.x-1,dest.y-1,dest.width+2,dest.height+2);
+    if(geometry.points)traceCanvasPolygon(geometry.points,placement);
+    else ctx.rect(dest.x-1,dest.y-1,dest.width+2,dest.height+2);
     ctx.clip();
     ctx.globalAlpha*=motion.opacity;
     ctx.translate(
@@ -245,17 +275,23 @@ function drawEffects(scene,t,w,h){
       }
     }
     if(effect==='glow'){
-      const a=(.06+.05*Math.sin(t*Math.PI*2))*str;
-      const g=ctx.createRadialGradient(w*.7,h*.18,0,w*.7,h*.18,w*.75);g.addColorStop(0,`rgba(255,244,183,${a*2})`);g.addColorStop(1,'rgba(255,244,183,0)');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
+      const pulse=.78+.22*Math.sin(t*Math.PI*2);
+      const a=(.13+.13*str)*pulse;
+      ctx.globalCompositeOperation='screen';
+      const g=ctx.createRadialGradient(w*.72,h*.12,0,w*.72,h*.12,w*.78);g.addColorStop(0,`rgba(255,248,188,${a*1.8})`);g.addColorStop(.42,`rgba(255,225,126,${a*.65})`);g.addColorStop(1,'rgba(255,244,183,0)');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
+      ctx.save();ctx.translate(w*.72,h*.08);ctx.rotate(-.5);
+      const beam=ctx.createLinearGradient(0,0,w*.7,0);beam.addColorStop(0,`rgba(255,249,205,${a*.72})`);beam.addColorStop(1,'rgba(255,249,205,0)');ctx.fillStyle=beam;
+      for(let i=-2;i<=2;i++){ctx.save();ctx.rotate(i*.13);ctx.fillRect(0,-w*.026,w*.78,w*.052);ctx.restore()}ctx.restore();
     }
     if(effect==='sparkles'){
-      for(let i=0;i<25;i++){const rr=seeded(i*999+hashString(scene.id)); const x=rr()*w,y=rr()*h;const a=(.1+.4*Math.abs(Math.sin(t*5+i)))*str;ctx.fillStyle=`rgba(255,248,210,${a})`;ctx.beginPath();ctx.arc(x,y,1+rr()*2.5,0,6.28);ctx.fill()}
+      ctx.globalCompositeOperation='screen';
+      for(let i=0;i<38;i++){const rr=seeded(i*999+hashString(scene.id));const x=rr()*w,y=rr()*h,r=2+rr()*4.5;const a=(.25+.7*Math.abs(Math.sin(t*5+i)))*(.45+.55*str);ctx.fillStyle=`rgba(255,246,173,${a*.32})`;ctx.beginPath();ctx.arc(x,y,r*2.4,0,6.28);ctx.fill();ctx.strokeStyle=`rgba(255,255,224,${a})`;ctx.lineWidth=Math.max(1,w/720);ctx.beginPath();ctx.moveTo(x-r*1.8,y);ctx.lineTo(x+r*1.8,y);ctx.moveTo(x,y-r*1.8);ctx.lineTo(x,y+r*1.8);ctx.stroke();ctx.fillStyle=`rgba(255,255,240,${a})`;ctx.beginPath();ctx.arc(x,y,r*.55,0,6.28);ctx.fill()}
     }
     if(effect==='snow'){
       ctx.fillStyle='white';for(const d of P.snow){const y=((d.y+t*d.speed*2)%1)*h;const x=(d.x+Math.sin(t*4+d.phase)*.02)*w;ctx.globalAlpha=.35+.55*str;ctx.beginPath();ctx.arc(x,y,d.size*w,0,6.28);ctx.fill()}
     }
     if(effect==='dust'){
-      ctx.fillStyle='#fff4c4';for(const d of P.dust){const x=(d.x+Math.sin(t*2+d.phase)*.01)*w,y=(d.y+Math.cos(t*1.6+d.phase)*.01)*h;ctx.globalAlpha=d.alpha*str;ctx.beginPath();ctx.arc(x,y,d.size*w,0,6.28);ctx.fill()}
+      ctx.globalCompositeOperation='screen';for(const d of P.dust){const x=(d.x+Math.sin(t*2+d.phase)*.018)*w,y=(d.y+Math.cos(t*1.6+d.phase)*.014)*h;const a=d.alpha*(.4+.75*str);ctx.globalAlpha=a*.28;ctx.fillStyle='#ffe9a8';ctx.beginPath();ctx.arc(x,y,d.size*w*2.3,0,6.28);ctx.fill();ctx.globalAlpha=a;ctx.fillStyle='#fff7d6';ctx.beginPath();ctx.arc(x,y,d.size*w,0,6.28);ctx.fill()}
     }
     if(effect==='butterflies'){
       for(const d of P.butterflies){const x=(d.x+Math.sin(t*3+d.phase)*.035)*w,y=(d.y+Math.cos(t*2.2+d.phase)*.025)*h;ctx.save();ctx.translate(x,y);ctx.rotate(Math.sin(t*4+d.phase)*.25);ctx.fillStyle=`rgba(255,211,65,${.55+.35*str})`;const s=d.size*w;ctx.beginPath();ctx.ellipse(-s*.35,0,s*.42,s*.6,-.4,0,6.28);ctx.ellipse(s*.35,0,s*.42,s*.6,.4,0,6.28);ctx.fill();ctx.restore()}
@@ -265,14 +301,18 @@ function drawEffects(scene,t,w,h){
 }
 function iColor(phase){return ['#6f9d4a','#a4b94a','#d29a42','#7ca35b'][Math.floor((phase/6.28)*4)%4]}
 
-function drawRegionGuide(rect,label,active){
+function drawRegionGuide(geometry,label,active,placement){
+  const rect=geometry.bounds;
   ctx.save();
+  ctx.beginPath();
+  if(geometry.points)traceCanvasPolygon(geometry.points,placement);
+  else ctx.rect(rect.x,rect.y,rect.width,rect.height);
   ctx.fillStyle=active?'rgba(76,184,255,.16)':'rgba(76,184,255,.07)';
-  ctx.fillRect(rect.x,rect.y,rect.width,rect.height);
+  ctx.fill();
   ctx.strokeStyle=active?'#7bd2ff':'rgba(123,210,255,.65)';
   ctx.lineWidth=Math.max(2,canvas.width/360);
   ctx.setLineDash(active?[]:[9,7]);
-  ctx.strokeRect(rect.x,rect.y,rect.width,rect.height);
+  ctx.stroke();
   ctx.setLineDash([]);
   ctx.font=`${Math.max(12,canvas.width/48)}px sans-serif`;
   const text=String(label||'動かす範囲');
@@ -289,12 +329,20 @@ function drawRegionGuide(rect,label,active){
 function drawMotionGuides(img,scene,placement){
   for(const rawRegion of scene.motionRegions||[]){
     const region=normalizeMotionRegion(rawRegion);
-    const source=regionSourceRect(region,img);
+    const source=regionSourceGeometry(region,img);
     if(!source)continue;
-    drawRegionGuide(sourceRectToCanvas(source,placement),region.name,region.id===state.selectedMotionRegionId);
+    drawRegionGuide({
+      bounds:sourceRectToCanvas(source.bounds,placement),
+      points:source.points
+    },region.name,region.id===state.selectedMotionRegionId,placement);
   }
   if(state.selectionDraft){
-    drawRegionGuide(sourceRectToCanvas(state.selectionDraft,placement),'ここを動かす',true);
+    const draft=state.selectionDraft;
+    const bounds=draft.kind==='polygon'?polygonBounds(draft.points):draft.rect;
+    drawRegionGuide({
+      bounds:sourceRectToCanvas(bounds,placement),
+      points:draft.kind==='polygon'?draft.points:null
+    },'ここを動かす',true,placement);
   }
 }
 
@@ -324,12 +372,16 @@ function effectLabel(key){return (EFFECTS.find(x=>x[0]===key)||[key,key])[1]}
 function moveScene(i,d){const j=i+d;if(j<0||j>=state.project.scenes.length)return;const a=state.project.scenes;[a[i],a[j]]=[a[j],a[i]];state.selected=j;renderSceneList();syncControls();renderFrame(currentScene(),0)}
 function selectScene(i){cancelRegionSelection();state.selected=Math.max(0,Math.min(i,state.project.scenes.length-1));state.selectedMotionRegionId=null;stopPlayback();renderSceneList();syncControls();renderFrame(currentScene(),0)}
 
-function setSelectionMode(enabled){
+function setSelectionMode(enabled,kind=state.selectionKind){
   state.selectingRegion=!!enabled;
+  state.selectionKind=kind==='polygon'?'polygon':'rectangle';
   state.selectionSession=null;
   state.selectionDraft=null;
   canvas.classList.toggle('selecting-region',state.selectingRegion);
-  $('selectRegionBtn').textContent=state.selectingRegion?'選択をやめる':'＋ 範囲を選ぶ';
+  $('selectRegionBtn').textContent=state.selectingRegion&&state.selectionKind==='rectangle'?'選択をやめる':'＋ 四角で選ぶ';
+  $('selectFreeRegionBtn').textContent=state.selectingRegion&&state.selectionKind==='polygon'?'選択をやめる':'＋ 自由に囲む';
+  $('selectRegionBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='rectangle');
+  $('selectFreeRegionBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='polygon');
   $('selectionNotice').hidden=!state.selectingRegion;
   renderFrame(currentScene(),+$('scrubber').value/1000);
 }
@@ -357,15 +409,22 @@ function syncMotionControls(scene){
     $('motionSpeedValue').textContent=`${Math.round((region.motion?.speed??.4)*100)}%`;
   }
   canvas.classList.toggle('selecting-region',state.selectingRegion);
-  $('selectRegionBtn').textContent=state.selectingRegion?'選択をやめる':'＋ 範囲を選ぶ';
+  $('selectRegionBtn').textContent=state.selectingRegion&&state.selectionKind==='rectangle'?'選択をやめる':'＋ 四角で選ぶ';
+  $('selectFreeRegionBtn').textContent=state.selectingRegion&&state.selectionKind==='polygon'?'選択をやめる':'＋ 自由に囲む';
+  $('selectRegionBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='rectangle');
+  $('selectFreeRegionBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='polygon');
   $('selectionNotice').hidden=!state.selectingRegion;
 }
 
 function syncControls(){
   const s=currentScene(); if(!s) return;
+  s.ambientDuration=Math.max(.5,Math.min(s.duration,s.ambientDuration??s.duration));
   $('sceneName').value=s.name||'';$('narrationText').value=s.narration||'';$('durationInput').value=s.duration;$('imageFitSelect').value=s.imageFit==='contain'?'contain':'cover';$('cameraSelect').value=s.camera||'none';$('textLock').checked=!!s.textLock;$('effectStrength').value=s.effectStrength??.55;
   [...document.querySelectorAll('[data-effect]')].forEach(el=>el.checked=(s.effects||[]).includes(el.dataset.effect));
   $('narrationAudioName').textContent=s.runtime?.narrationFile?.name||'未設定';$('ambientAudioName').textContent=s.runtime?.ambientFile?.name||'未設定';$('bgmAudioName').textContent=state.bgmFile?.name||'未設定';$('bgmVolume').value=state.project.bgmVolume??.35;
+  $('narrationVolume').value=s.narrationVolume??1;$('narrationVolumeValue').textContent=`${Math.round((s.narrationVolume??1)*100)}%`;
+  $('ambientVolume').value=s.ambientVolume??.55;$('ambientVolumeValue').textContent=`${Math.round((s.ambientVolume??.55)*100)}%`;
+  $('ambientDuration').value=s.ambientDuration;
   $('sceneStatus').textContent=`${state.selected+1} / ${state.project.scenes.length}  ${s.name}`;$('timeLabel').textContent=`0.0 / ${s.duration.toFixed(1)} 秒`;$('scrubber').value=0;
   syncMotionControls(s);
 }
@@ -404,8 +463,10 @@ async function beginRegionSelection(event){
     const placement=coverPlacement(img,canvas.width,canvas.height,scene,t);
     const imageSize={width:img.naturalWidth,height:img.naturalHeight};
     const start=canvasPointToSource(canvasPoint(event),placement,imageSize);
-    state.selectionSession={pointerId:event.pointerId,sceneId:scene.id,start,placement,imageSize};
-    state.selectionDraft={x:start.x,y:start.y,width:0,height:0};
+    state.selectionSession={pointerId:event.pointerId,sceneId:scene.id,start,placement,imageSize,kind:state.selectionKind};
+    state.selectionDraft=state.selectionKind==='polygon'
+      ?{kind:'polygon',points:[start]}
+      :{kind:'rectangle',rect:{x:start.x,y:start.y,width:0,height:0}};
     canvas.setPointerCapture?.(event.pointerId);
     await renderFrame(scene,t);
   }catch{
@@ -419,7 +480,16 @@ function updateRegionSelection(event){
   if(!session||session.pointerId!==event.pointerId||session.sceneId!==currentScene()?.id)return;
   event.preventDefault();
   const point=canvasPointToSource(canvasPoint(event),session.placement,session.imageSize);
-  state.selectionDraft=rectFromPoints(session.start,point);
+  if(session.kind==='polygon'){
+    const points=state.selectionDraft?.points||[];
+    const last=points[points.length-1];
+    if(!last||Math.hypot(point.x-last.x,point.y-last.y)>=5/session.placement.scale){
+      points.push(point);
+    }
+    state.selectionDraft={kind:'polygon',points};
+  }else{
+    state.selectionDraft={kind:'rectangle',rect:rectFromPoints(session.start,point)};
+  }
   renderFrame(currentScene(),+$('scrubber').value/1000);
 }
 
@@ -427,9 +497,10 @@ function finishRegionSelection(event){
   const session=state.selectionSession;
   if(!session||session.pointerId!==event.pointerId)return;
   updateRegionSelection(event);
-  const rect=state.selectionDraft;
+  const draft=state.selectionDraft;
   state.selectionSession=null;
-  if(!rect||rect.width<8||rect.height<8){
+  const bounds=draft?.kind==='polygon'?polygonBounds(draft.points):draft?.rect;
+  if(!bounds||bounds.width<8||bounds.height<8||(draft.kind==='polygon'&&draft.points.length<3)){
     state.selectionDraft=null;
     $('selectionNotice').textContent='範囲が小さすぎます。画像の上を、もう少し大きくドラッグしてください。';
     renderFrame(currentScene(),+$('scrubber').value/1000);
@@ -437,16 +508,18 @@ function finishRegionSelection(event){
   }
   const scene=currentScene();
   const index=(scene.motionRegions||[]).length;
+  const isPolygon=draft.kind==='polygon';
   const region=normalizeMotionRegion({
     id:crypto.randomUUID(),
-    name:`動かす範囲 ${index+1}`,
+    name:`${isPolygon?'自由範囲':'四角範囲'} ${index+1}`,
     enabled:true,
     zIndex:index,
     mask:{
-      kind:'rectangle',
+      kind:isPolygon?'polygon':'rectangle',
       width:session.imageSize.width,
       height:session.imageSize.height,
-      rect,
+      rect:isPolygon?null:draft.rect,
+      points:isPolygon?draft.points:[],
       feather:6,
       invert:false
     },
@@ -479,16 +552,22 @@ function updateMotionControl(mutator){
 function bindControls(){
   $('sceneName').oninput=e=>{currentScene().name=e.target.value;renderSceneList()};
   $('narrationText').oninput=e=>{currentScene().narration=e.target.value};
-  $('durationInput').oninput=e=>{currentScene().duration=Math.max(1,+e.target.value||1);renderSceneList()};
+  $('durationInput').oninput=e=>{const scene=currentScene(),previous=scene.duration;scene.duration=Math.max(1,+e.target.value||1);if(scene.ambientDuration==null||scene.ambientDuration>=previous)scene.ambientDuration=scene.duration;else scene.ambientDuration=Math.min(scene.ambientDuration,scene.duration);$('ambientDuration').value=scene.ambientDuration;renderSceneList()};
   $('imageFitSelect').onchange=e=>{currentScene().imageFit=e.target.value==='contain'?'contain':'cover';renderFrame(currentScene(),+$('scrubber').value/1000)};
   $('cameraSelect').onchange=e=>{currentScene().camera=e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000)};
   $('textLock').onchange=e=>{currentScene().textLock=e.target.checked;renderFrame(currentScene(),+$('scrubber').value/1000)};
   $('effectStrength').oninput=e=>{currentScene().effectStrength=+e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000)};
-  $('autoDurationBtn').onclick=()=>{const s=currentScene();s.duration=estimateDuration(s.narration);$('durationInput').value=s.duration;renderSceneList()};
+  $('autoDurationBtn').onclick=()=>{const s=currentScene(),previous=s.duration;s.duration=estimateDuration(s.narration);if(s.ambientDuration==null||s.ambientDuration>=previous)s.ambientDuration=s.duration;else s.ambientDuration=Math.min(s.ambientDuration,s.duration);$('durationInput').value=s.duration;$('ambientDuration').value=s.ambientDuration;renderSceneList()};
   $('autoEffectBtn').onclick=()=>{const s=currentScene();s.effects=inferEffects(s.narration);syncControls();renderSceneList();renderFrame(s,0)};
   $('selectRegionBtn').onclick=()=>{
-    $('selectionNotice').textContent='プレビュー画像の上をドラッグしてください。もう一度ボタンを押すと中止します。';
-    setSelectionMode(!state.selectingRegion);
+    const active=state.selectingRegion&&state.selectionKind==='rectangle';
+    $('selectionNotice').textContent='画像の上をドラッグして四角く囲みます。';
+    setSelectionMode(!active,'rectangle');
+  };
+  $('selectFreeRegionBtn').onclick=()=>{
+    const active=state.selectingRegion&&state.selectionKind==='polygon';
+    $('selectionNotice').textContent='動かしたい物の輪郭を、指やマウスで一周なぞってください。';
+    setSelectionMode(!active,'polygon');
   };
   $('motionRegionSelect').onchange=e=>{state.selectedMotionRegionId=e.target.value;syncMotionControls(currentScene());renderFrame(currentScene(),+$('scrubber').value/1000)};
   $('motionEnabled').onchange=e=>updateMotionControl(region=>region.enabled=e.target.checked);
@@ -500,13 +579,16 @@ function bindControls(){
   canvas.addEventListener('pointerdown',beginRegionSelection);
   canvas.addEventListener('pointermove',updateRegionSelection);
   canvas.addEventListener('pointerup',finishRegionSelection);
-  canvas.addEventListener('pointercancel',()=>{state.selectionSession=null;state.selectionDraft=null;renderFrame(currentScene(),+$('scrubber').value/1000)});
+  canvas.addEventListener('pointercancel',()=>setSelectionMode(false));
   $('scrubber').oninput=e=>{const v=+e.target.value/1000;renderFrame(currentScene(),v);$('timeLabel').textContent=`${(v*currentScene().duration).toFixed(1)} / ${currentScene().duration.toFixed(1)} 秒`};
   $('prevBtn').onclick=()=>selectScene(state.selected-1);$('nextBtn').onclick=()=>selectScene(state.selected+1);
   $('playSceneBtn').onclick=()=>playScenes([state.selected]);$('playAllBtn').onclick=()=>playScenes([...state.project.scenes.keys()]);
   $('speakBtn').onclick=()=>speakCurrent();
   $('narrationAudio').onchange=e=>{ensureRuntime(currentScene()).narrationFile=e.target.files[0]||null;syncControls()};
   $('ambientAudio').onchange=e=>{ensureRuntime(currentScene()).ambientFile=e.target.files[0]||null;syncControls()};
+  $('narrationVolume').oninput=e=>{const value=+e.target.value;currentScene().narrationVolume=value;$('narrationVolumeValue').textContent=`${Math.round(value*100)}%`};
+  $('ambientVolume').oninput=e=>{const value=+e.target.value;currentScene().ambientVolume=value;$('ambientVolumeValue').textContent=`${Math.round(value*100)}%`};
+  $('ambientDuration').oninput=e=>{currentScene().ambientDuration=Math.max(.5,Math.min(currentScene().duration,+e.target.value||currentScene().duration));e.target.value=currentScene().ambientDuration};
   $('bgmAudio').onchange=e=>{state.bgmFile=e.target.files[0]||null;syncControls()};
   $('bgmVolume').oninput=e=>state.project.bgmVolume=+e.target.value;
   $('resolutionSelect').onchange=e=>setResolution(e.target.value);
@@ -517,11 +599,11 @@ function bindControls(){
 }
 function ensureRuntime(s){if(!s.runtime)s.runtime={narrationFile:null,ambientFile:null};return s.runtime}
 function setResolution(v){const [w,h]=v.split('x').map(Number);state.project.width=w;state.project.height=h;canvas.width=w;canvas.height=h;renderFrame(currentScene(),+$('scrubber').value/1000)}
-function addBlankScene(){state.project.scenes.push({id:crypto.randomUUID(),name:`シーン${state.project.scenes.length+1}`,image:'',imageObjectUrl:null,narration:'',duration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}});selectScene(state.project.scenes.length-1)}
+function addBlankScene(){state.project.scenes.push({id:crypto.randomUUID(),name:`シーン${state.project.scenes.length+1}`,image:'',imageObjectUrl:null,narration:'',duration:5,narrationVolume:1,ambientVolume:.55,ambientDuration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}});selectScene(state.project.scenes.length-1)}
 function removeCurrentScene(){if(state.project.scenes.length<=1)return;state.project.scenes.splice(state.selected,1);state.selected=Math.min(state.selected,state.project.scenes.length-1);selectScene(state.selected)}
-function addImages(files){for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length)}
+function addImages(files){for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,narrationVolume:1,ambientVolume:.55,ambientDuration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length)}
 
-function stopPlayback(){state.playToken++;state.playing=false;for(const a of state.audioPreview){try{a.pause()}catch{}}state.audioPreview=[]}
+function stopPlayback(){state.playToken++;state.playing=false;for(const a of state.audioPreview){try{a.pause()}catch{}}state.audioPreview=[];for(const src of state.generatedAmbient){try{src.stop()}catch{}}state.generatedAmbient=[]}
 async function previewCurrentMotion(){
   if(!currentMotionRegion())return;
   stopPlayback();const token=state.playToken;state.playing=true;
@@ -541,23 +623,26 @@ async function previewCurrentMotion(){
   renderFrame(scene,previewSeconds/scene.duration);
 }
 async function playScenes(indices){stopPlayback();const token=state.playToken;state.playing=true;let bgm=null;if(state.bgmFile){bgm=new Audio(URL.createObjectURL(state.bgmFile));bgm.loop=true;bgm.volume=state.project.bgmVolume;bgm.play().catch(()=>{});state.audioPreview.push(bgm)}
-  for(const idx of indices){if(token!==state.playToken)return;state.selected=idx;renderSceneList();syncControls();const s=currentScene();const started=performance.now();playSceneAudioPreview(s,bgm);while(token===state.playToken){const elapsed=(performance.now()-started)/1000;const n=Math.min(1,elapsed/s.duration);await renderFrame(s,n);$('scrubber').value=n*1000;$('timeLabel').textContent=`${Math.min(elapsed,s.duration).toFixed(1)} / ${s.duration.toFixed(1)} 秒`;if(n>=1)break;await sleep(1000/30)}}
+  for(const idx of indices){if(token!==state.playToken)return;state.selected=idx;renderSceneList();syncControls();const s=currentScene();const started=performance.now();const sceneAudios=playSceneAudioPreview(s,bgm);while(token===state.playToken){const elapsed=(performance.now()-started)/1000;for(const item of sceneAudios)if(elapsed>=item.stopAt&&!item.audio.paused)item.audio.pause();const n=Math.min(1,elapsed/s.duration);await renderFrame(s,n);$('scrubber').value=n*1000;$('timeLabel').textContent=`${Math.min(elapsed,s.duration).toFixed(1)} / ${s.duration.toFixed(1)} 秒`;if(n>=1)break;await sleep(1000/30)}for(const item of sceneAudios)item.audio.pause()}
   if(bgm)bgm.pause();state.playing=false;renderFrame(currentScene(),1);
 }
 function playSceneAudioPreview(s,bgm){
-  const files=[s.runtime?.narrationFile,s.runtime?.ambientFile].filter(Boolean);if(bgm)bgm.volume=s.runtime?.narrationFile?state.project.bgmVolume*.42:state.project.bgmVolume;
-  for(const f of files){const a=new Audio(URL.createObjectURL(f));a.volume=f===s.runtime?.narrationFile?1:.55;a.play().catch(()=>{});state.audioPreview.push(a)}
-  if(!s.runtime?.ambientFile && (s.effects||[]).includes('rain')) startWebAudioAmbient('rain',s.duration);
-  if(!s.runtime?.ambientFile && (s.effects||[]).includes('wind')) startWebAudioAmbient('wind',Math.min(s.duration,3.5));
+  const started=[];if(bgm)bgm.volume=s.runtime?.narrationFile?state.project.bgmVolume*.42:state.project.bgmVolume;
+  if(s.runtime?.narrationFile){const a=new Audio(URL.createObjectURL(s.runtime.narrationFile));a.volume=s.narrationVolume??1;a.play().catch(()=>{});state.audioPreview.push(a);started.push({audio:a,stopAt:s.duration})}
+  const ambientDuration=Math.max(.5,Math.min(s.duration,s.ambientDuration??s.duration));
+  if(s.runtime?.ambientFile){const a=new Audio(URL.createObjectURL(s.runtime.ambientFile));a.loop=true;a.volume=s.ambientVolume??.55;a.play().catch(()=>{});state.audioPreview.push(a);started.push({audio:a,stopAt:ambientDuration})}
+  if(!s.runtime?.ambientFile && (s.effects||[]).includes('rain')) startWebAudioAmbient('rain',ambientDuration,s.ambientVolume??.55);
+  if(!s.runtime?.ambientFile && (s.effects||[]).includes('wind')) startWebAudioAmbient('wind',ambientDuration,s.ambientVolume??.55);
+  return started;
 }
-function speakCurrent(){if(!('speechSynthesis'in window))return alert('このブラウザは音声読み上げに対応していません');speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(currentScene().narration);u.lang='ja-JP';u.rate=.92;speechSynthesis.speak(u)}
+function speakCurrent(){if(!('speechSynthesis'in window))return alert('このブラウザは音声読み上げに対応していません');speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(currentScene().narration);u.lang='ja-JP';u.rate=.92;u.volume=currentScene().narrationVolume??1;speechSynthesis.speak(u)}
 let previewAudioCtx=null;
-function startWebAudioAmbient(kind,duration){try{previewAudioCtx ||= new AudioContext();const c=previewAudioCtx;const b=c.createBuffer(1,c.sampleRate*2,c.sampleRate);const d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;const src=c.createBufferSource();src.buffer=b;src.loop=true;const filter=c.createBiquadFilter(),gain=c.createGain();if(kind==='rain'){filter.type='highpass';filter.frequency.value=1800;gain.gain.value=.04}else{filter.type='lowpass';filter.frequency.value=500;gain.gain.value=.06}src.connect(filter).connect(gain).connect(c.destination);src.start();src.stop(c.currentTime+duration)}catch{}}
+function startWebAudioAmbient(kind,duration,volume){try{previewAudioCtx ||= new AudioContext();const c=previewAudioCtx;const b=c.createBuffer(1,c.sampleRate*2,c.sampleRate);const d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;const src=c.createBufferSource();src.buffer=b;src.loop=true;const filter=c.createBiquadFilter(),gain=c.createGain();if(kind==='rain'){filter.type='highpass';filter.frequency.value=1800;gain.gain.value=.06*volume}else{filter.type='lowpass';filter.frequency.value=500;gain.gain.value=.08*volume}src.connect(filter).connect(gain).connect(c.destination);state.generatedAmbient.push(src);src.onended=()=>{state.generatedAmbient=state.generatedAmbient.filter(item=>item!==src)};src.start();src.stop(c.currentTime+duration)}catch{}}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 function serializableProject(){return {...state.project,scenes:state.project.scenes.map(({runtime,imageObjectUrl,...s})=>({...s,imageObjectUrl:null}))}}
 function saveProjectJson(){const blob=new Blob([JSON.stringify(serializableProject(),null,2)],{type:'application/json'});downloadBlob(blob,'stillmotion-project.json')}
-async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(s=>normalizeSceneMotion({...s,id:s.id||crypto.randomUUID(),imageFit:s.imageFit==='contain'?'contain':'cover',runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;state.selectedMotionRegionId=null;setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0)}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
+async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(s=>normalizeSceneMotion({...s,id:s.id||crypto.randomUUID(),imageFit:s.imageFit==='contain'?'contain':'cover',narrationVolume:Number.isFinite(+s.narrationVolume)?Math.max(0,Math.min(1,+s.narrationVolume)):1,ambientVolume:Number.isFinite(+s.ambientVolume)?Math.max(0,Math.min(1,+s.ambientVolume)):.55,ambientDuration:Number.isFinite(+s.ambientDuration)?Math.max(.5,Math.min(+s.duration||5,+s.ambientDuration)):(+s.duration||5),runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;state.selectedMotionRegionId=null;setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0)}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
 
 async function decodeFile(ctx,file){if(!file)return null;return ctx.decodeAudioData(await file.arrayBuffer())}
@@ -575,9 +660,11 @@ async function exportWebM(){
     const s=state.project.scenes[i];state.selected=i;renderSceneList();syncControls();
     const local=[];
     try{
-      if(s.runtime?.narrationFile){const b=await decodeFile(audioCtx,s.runtime.narrationFile);const src=audioCtx.createBufferSource(),g=audioCtx.createGain();src.buffer=b;g.gain.value=1;src.connect(g).connect(master);src.start();local.push(src);if(bgmGain)bgmGain.gain.setTargetAtTime(state.project.bgmVolume*.38,audioCtx.currentTime,.08)} else if(bgmGain)bgmGain.gain.setTargetAtTime(state.project.bgmVolume,audioCtx.currentTime,.08);
-      if(s.runtime?.ambientFile){const b=await decodeFile(audioCtx,s.runtime.ambientFile);const src=audioCtx.createBufferSource(),g=audioCtx.createGain();src.buffer=b;g.gain.value=.5;src.connect(g).connect(master);src.start();local.push(src)} else {
-        for(const kind of ['rain','wind']) if((s.effects||[]).includes(kind)){const src=audioCtx.createBufferSource(),f=audioCtx.createBiquadFilter(),g=audioCtx.createGain();src.buffer=makeNoiseBuffer(audioCtx);src.loop=true;if(kind==='rain'){f.type='highpass';f.frequency.value=1700;g.gain.value=.035}else{f.type='lowpass';f.frequency.value=450;g.gain.value=.045}src.connect(f).connect(g).connect(master);src.start();local.push(src)}
+      if(s.runtime?.narrationFile){const b=await decodeFile(audioCtx,s.runtime.narrationFile);const src=audioCtx.createBufferSource(),g=audioCtx.createGain();src.buffer=b;g.gain.value=s.narrationVolume??1;src.connect(g).connect(master);src.start();local.push(src);if(bgmGain)bgmGain.gain.setTargetAtTime(state.project.bgmVolume*.38,audioCtx.currentTime,.08)} else if(bgmGain)bgmGain.gain.setTargetAtTime(state.project.bgmVolume,audioCtx.currentTime,.08);
+      const ambientDuration=Math.max(.5,Math.min(s.duration,s.ambientDuration??s.duration));
+      const ambientVolume=s.ambientVolume??.55;
+      if(s.runtime?.ambientFile){const b=await decodeFile(audioCtx,s.runtime.ambientFile);const src=audioCtx.createBufferSource(),g=audioCtx.createGain();src.buffer=b;src.loop=true;g.gain.value=ambientVolume;src.connect(g).connect(master);src.start();src.stop(audioCtx.currentTime+ambientDuration);local.push(src)} else {
+        for(const kind of ['rain','wind']) if((s.effects||[]).includes(kind)){const src=audioCtx.createBufferSource(),f=audioCtx.createBiquadFilter(),g=audioCtx.createGain();src.buffer=makeNoiseBuffer(audioCtx);src.loop=true;if(kind==='rain'){f.type='highpass';f.frequency.value=1700;g.gain.value=.06*ambientVolume}else{f.type='lowpass';f.frequency.value=450;g.gain.value=.08*ambientVolume}src.connect(f).connect(g).connect(master);src.start();src.stop(audioCtx.currentTime+ambientDuration);local.push(src)}
       }
     }catch(e){console.warn('audio',e)}
     const start=performance.now();while(true){const elapsed=(performance.now()-start)/1000;const n=Math.min(1,elapsed/s.duration);await renderFrame(s,n);const all=done+Math.min(elapsed,s.duration);$('exportProgress').value=all/total;$('exportStatus').textContent=`書き出し中 ${Math.round(all/total*100)}% — ${i+1}/${state.project.scenes.length}`;if(n>=1)break;await sleep(1000/(state.project.fps||30))}

@@ -35,6 +35,7 @@ canvas.selecting-region{cursor:crosshair;box-shadow:0 0 0 3px rgba(123,200,255,.
 .setting-help{margin:3px 0 0;color:var(--muted);font-size:11px;line-height:1.5}
 .preview-badge{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#214963;color:#b8e8ff;font-size:10px;vertical-align:1px}
 .selection-notice{margin:9px 0;padding:9px 10px;border:1px solid #4789b2;border-radius:8px;background:#173246;color:#d8f2ff;font-size:12px;line-height:1.5}
+.selection-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:8px 0}
 .empty-state{margin-top:8px;padding:13px 10px;border:1px dashed #415064;border-radius:8px;color:var(--muted);font-size:12px;text-align:center}
 .motion-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}
 .danger-button{border-color:#6b3c43;color:#ffc6c6}
