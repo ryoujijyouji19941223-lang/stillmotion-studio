@@ -39,6 +39,33 @@ test('freehand polygon points are normalized and bounded', () => {
   assert.deepEqual(validateMotionRegion(region), []);
 });
 
+test('brush corrections are preserved and unsafe values are clamped', () => {
+  const region = normalizeMotionRegion({
+    mask: {
+      kind: 'polygon',
+      width: 1080,
+      height: 1440,
+      points: [{ x: 10, y: 10 }, { x: 200, y: 20 }, { x: 80, y: 240 }],
+      strokes: [
+        { mode: 'add', size: 40, points: [{ x: 12, y: 18 }, { x: 42, y: 58 }] },
+        { mode: 'erase', size: 9999, points: [{ x: -4, y: 30 }] }
+      ]
+    }
+  });
+
+  assert.deepEqual(region.mask.strokes[0], {
+    mode: 'add',
+    size: 40,
+    points: [{ x: 12, y: 18 }, { x: 42, y: 58 }]
+  });
+  assert.deepEqual(region.mask.strokes[1], {
+    mode: 'erase',
+    size: 512,
+    points: [{ x: 0, y: 30 }]
+  });
+  assert.deepEqual(validateMotionRegion(region), []);
+});
+
 test('landscape image can fit fully inside a portrait canvas', () => {
   const placement = calculateImagePlacement(
     { width: 1080, height: 720 },

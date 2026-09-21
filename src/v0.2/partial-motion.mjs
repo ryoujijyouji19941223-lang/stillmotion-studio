@@ -51,6 +51,14 @@ function normalizePoint(point = {}) {
   };
 }
 
+function normalizeStroke(stroke = {}) {
+  return {
+    mode: stroke.mode === 'erase' ? 'erase' : 'add',
+    size: clamp(finiteNumber(stroke.size, 36), 1, 512),
+    points: Array.isArray(stroke.points) ? stroke.points.map(normalizePoint) : []
+  };
+}
+
 export function polygonBounds(points = []) {
   const normalized = points.map(normalizePoint);
   if (!normalized.length) return null;
@@ -146,6 +154,9 @@ function normalizeMask(mask = {}) {
     height: positiveInteger(mask.height, 1),
     rect: kind === 'rectangle' ? normalizeRect(mask.rect) : null,
     points,
+    strokes: Array.isArray(mask.strokes)
+      ? mask.strokes.map(normalizeStroke).filter(stroke => stroke.points.length)
+      : [],
     source: typeof mask.source === 'string' && mask.source ? mask.source : null,
     feather: clamp(finiteNumber(mask.feather, 0), 0, 128),
     invert: mask.invert === true
@@ -224,6 +235,14 @@ export function validateMotionRegion(input) {
 
   if (input.mask?.kind === 'polygon' && (!Array.isArray(input.mask.points) || input.mask.points.length < 3)) {
     errors.push('自由選択には3点以上の輪郭が必要です。');
+  }
+
+  if (Array.isArray(input.mask?.strokes)) {
+    input.mask.strokes.forEach((stroke, index) => {
+      if (!['add', 'erase'].includes(stroke?.mode) || !(Number(stroke?.size) > 0) || !Array.isArray(stroke?.points) || !stroke.points.length) {
+        errors.push(`ブラシ線 ${index + 1} の形式が正しくありません。`);
+      }
+    });
   }
 
   if (['paint', 'ai'].includes(input.mask?.kind) && !input.mask?.source) {

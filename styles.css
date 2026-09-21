@@ -15,12 +15,13 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-appl
 button,input,select,textarea{font:inherit}
 button{background:#2a3442;color:var(--text);border:1px solid #405066;border-radius:9px;padding:8px 12px;cursor:pointer}
 button:hover{background:#344258}
+button:disabled{cursor:not-allowed;opacity:.42;background:#222a34}
 button.primary{background:#13699a;border-color:#278abe}
 button.primary:hover{background:#177caf}
 button.small{padding:4px 9px}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 22px;border-bottom:1px solid var(--line);background:#151a22;position:sticky;top:0;z-index:10}
 h1{font-size:22px;margin:0 0 4px} h1 span{font-size:13px;color:var(--accent)}
-.topbar p{margin:0;color:var(--muted);font-size:13px}.top-actions{display:flex;gap:8px;flex-wrap:wrap}
+.topbar p{margin:0;color:var(--muted);font-size:13px}.top-actions,.history-actions{display:flex;gap:8px;flex-wrap:wrap}.history-actions{padding-right:8px;border-right:1px solid var(--line)}
 .layout{display:grid;grid-template-columns:260px minmax(450px,1fr) 340px;gap:12px;padding:12px;min-height:calc(100vh - 145px)}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px;min-width:0}
 .panel h2{font-size:16px;margin:0 0 10px}.panel h3{font-size:14px;margin:0 0 9px}.panel-title-row{display:flex;justify-content:space-between;align-items:center;gap:10px}.panel-title-row.compact{margin-bottom:7px}
@@ -36,6 +37,7 @@ canvas.selecting-region{cursor:crosshair;box-shadow:0 0 0 3px rgba(123,200,255,.
 .preview-badge{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#214963;color:#b8e8ff;font-size:10px;vertical-align:1px}
 .selection-notice{margin:9px 0;padding:9px 10px;border:1px solid #4789b2;border-radius:8px;background:#173246;color:#d8f2ff;font-size:12px;line-height:1.5}
 .selection-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:8px 0}
+.brush-editor{margin:10px 0;padding:10px;border:1px solid #354b5d;border-radius:9px;background:#151d27}.setting-subtitle{font-size:13px;font-weight:650}.erase-button.primary{background:#8a3e47;border-color:#be5965}.erase-button.primary:hover{background:#9f4853}
 .empty-state{margin-top:8px;padding:13px 10px;border:1px dashed #415064;border-radius:8px;color:var(--muted);font-size:12px;text-align:center}
 .motion-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}
 .danger-button{border-color:#6b3c43;color:#ffc6c6}

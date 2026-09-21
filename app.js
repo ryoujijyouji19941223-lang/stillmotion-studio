@@ -81,6 +81,7 @@ const state = {
   selected: 0,
   images: new Map(),
   particles: new Map(),
+  maskCache: new Map(),
   playing: false,
   playToken: 0,
   bgmFile: null,
@@ -91,6 +92,10 @@ const state = {
   selectionKind: 'rectangle',
   selectionSession: null,
   selectionDraft: null,
+  history: [],
+  future: [],
+  historyTimer: null,
+  restoringHistory: false,
   exporting: false
 };
 
@@ -101,6 +106,70 @@ const ctx = canvas.getContext('2d');
 function currentScene(){ return state.project.scenes[state.selected]; }
 function currentMotionRegion(){
   return (currentScene()?.motionRegions || []).find(region => region.id === state.selectedMotionRegionId) || null;
+}
+
+function captureHistorySnapshot(){
+  return {
+    data:JSON.stringify({project:serializableProject(),selected:state.selected,selectedMotionRegionId:state.selectedMotionRegionId}),
+    media:new Map(state.project.scenes.map(scene=>[scene.id,{runtime:scene.runtime,imageObjectUrl:scene.imageObjectUrl}]))
+  };
+}
+
+function syncHistoryButtons(){
+  $('undoBtn').disabled=state.history.length<=1;
+  $('redoBtn').disabled=!state.future.length;
+}
+
+function commitHistory(){
+  if(state.restoringHistory)return;
+  clearTimeout(state.historyTimer);state.historyTimer=null;
+  const snapshot=captureHistorySnapshot();
+  if(state.history.at(-1)?.data===snapshot.data)return syncHistoryButtons();
+  state.history.push(snapshot);
+  if(state.history.length>50)state.history.shift();
+  state.future=[];
+  syncHistoryButtons();
+}
+
+function queueHistoryCommit(){
+  clearTimeout(state.historyTimer);
+  state.historyTimer=setTimeout(commitHistory,320);
+}
+
+function resetHistory(){
+  clearTimeout(state.historyTimer);state.historyTimer=null;
+  state.history=[captureHistorySnapshot()];state.future=[];syncHistoryButtons();
+}
+
+function restoreHistorySnapshot(snapshot){
+  const parsed=JSON.parse(snapshot.data);
+  state.restoringHistory=true;
+  state.project=parsed.project;
+  state.project.scenes=state.project.scenes.map(scene=>{
+    const media=snapshot.media.get(scene.id);
+    return normalizeSceneMotion({...scene,imageObjectUrl:media?.imageObjectUrl||null,runtime:media?.runtime||{narrationFile:null,ambientFile:null}});
+  });
+  state.selected=Math.max(0,Math.min(parsed.selected,state.project.scenes.length-1));
+  state.selectedMotionRegionId=parsed.selectedMotionRegionId;
+  state.maskCache.clear();
+  setSelectionMode(false);
+  setResolution(`${state.project.width||720}x${state.project.height||960}`);
+  renderSceneList();syncControls();renderFrame(currentScene(),0);
+  state.restoringHistory=false;
+  syncHistoryButtons();
+}
+
+function undo(){
+  if(state.historyTimer)commitHistory();
+  if(state.history.length<=1)return;
+  state.future.push(state.history.pop());
+  restoreHistorySnapshot(state.history.at(-1));
+}
+
+function redo(){
+  if(state.historyTimer)commitHistory();
+  const snapshot=state.future.pop();if(!snapshot)return;
+  state.history.push(snapshot);restoreHistorySnapshot(snapshot);
 }
 
 function seeded(seed){
@@ -192,16 +261,33 @@ function regionSourceRect(region,img){
 }
 
 function regionSourceGeometry(region,img){
-  if(region.mask.kind==='rectangle'){
-    const bounds=regionSourceRect(region,img);
-    return bounds?{bounds,points:null}:null;
-  }
-  if(region.mask.kind!=='polygon'||region.mask.points.length<3)return null;
   const fx=img.naturalWidth/Math.max(1,region.mask.width);
   const fy=img.naturalHeight/Math.max(1,region.mask.height);
-  const points=region.mask.points.map(point=>({x:point.x*fx,y:point.y*fy}));
-  const bounds=polygonBounds(points);
-  return bounds?{bounds,points}:null;
+  let bounds=null,points=null,rect=null;
+  if(region.mask.kind==='rectangle'){
+    rect=regionSourceRect(region,img);
+    bounds=rect;
+  }else if(region.mask.kind==='polygon'&&region.mask.points.length>=3){
+    points=region.mask.points.map(point=>({x:point.x*fx,y:point.y*fy}));
+    bounds=polygonBounds(points);
+  }
+  if(!bounds)return null;
+  const strokes=(region.mask.strokes||[]).map(stroke=>({
+    mode:stroke.mode,
+    size:stroke.size*(fx+fy)/2,
+    points:stroke.points.map(point=>({x:point.x*fx,y:point.y*fy}))
+  }));
+  for(const stroke of strokes){
+    if(stroke.mode!=='add')continue;
+    const radius=stroke.size/2;
+    for(const point of stroke.points){
+      const left=Math.max(0,point.x-radius),top=Math.max(0,point.y-radius);
+      const right=Math.min(img.naturalWidth,point.x+radius),bottom=Math.min(img.naturalHeight,point.y+radius);
+      const x=Math.min(bounds.x,left),y=Math.min(bounds.y,top);
+      bounds={x,y,width:Math.max(bounds.x+bounds.width,right)-x,height:Math.max(bounds.y+bounds.height,bottom)-y};
+    }
+  }
+  return {bounds,points,rect,strokes,scale:(fx+fy)/2};
 }
 
 function traceCanvasPolygon(points,placement){
@@ -213,23 +299,69 @@ function traceCanvasPolygon(points,placement){
   ctx.closePath();
 }
 
+function traceStroke(context,stroke,offsetX=0,offsetY=0){
+  if(!stroke.points.length)return;
+  context.beginPath();
+  const first=stroke.points[0];
+  if(stroke.points.length===1){
+    context.arc(first.x-offsetX,first.y-offsetY,stroke.size/2,0,Math.PI*2);
+    context.fill();
+    return;
+  }
+  context.moveTo(first.x-offsetX,first.y-offsetY);
+  for(let i=1;i<stroke.points.length;i++)context.lineTo(stroke.points[i].x-offsetX,stroke.points[i].y-offsetY);
+  context.stroke();
+}
+
+function maskedRegionLayer(img,region){
+  const geometry=regionSourceGeometry(region,img);if(!geometry)return null;
+  const feather=(region.mask.feather||0)*geometry.scale;
+  const x=Math.max(0,Math.floor(geometry.bounds.x-feather*2));
+  const y=Math.max(0,Math.floor(geometry.bounds.y-feather*2));
+  const right=Math.min(img.naturalWidth,Math.ceil(geometry.bounds.x+geometry.bounds.width+feather*2));
+  const bottom=Math.min(img.naturalHeight,Math.ceil(geometry.bounds.y+geometry.bounds.height+feather*2));
+  const bounds={x,y,width:Math.max(1,right-x),height:Math.max(1,bottom-y)};
+  const signature=`${img.currentSrc||img.src}|${img.naturalWidth}x${img.naturalHeight}|${JSON.stringify(region.mask)}`;
+  const cached=state.maskCache.get(region.id);
+  if(cached?.signature===signature)return cached.value;
+
+  const mask=document.createElement('canvas');mask.width=Math.ceil(bounds.width);mask.height=Math.ceil(bounds.height);
+  const mctx=mask.getContext('2d');mctx.fillStyle='#fff';mctx.strokeStyle='#fff';mctx.lineCap='round';mctx.lineJoin='round';
+  if(geometry.points){
+    mctx.beginPath();mctx.moveTo(geometry.points[0].x-x,geometry.points[0].y-y);
+    for(let i=1;i<geometry.points.length;i++)mctx.lineTo(geometry.points[i].x-x,geometry.points[i].y-y);
+    mctx.closePath();mctx.fill();
+  }else if(geometry.rect){
+    mctx.fillRect(geometry.rect.x-x,geometry.rect.y-y,geometry.rect.width,geometry.rect.height);
+  }
+  for(const stroke of geometry.strokes){
+    mctx.globalCompositeOperation=stroke.mode==='erase'?'destination-out':'source-over';
+    mctx.lineWidth=stroke.size;mctx.fillStyle='#fff';mctx.strokeStyle='#fff';traceStroke(mctx,stroke,x,y);
+  }
+  mctx.globalCompositeOperation='source-over';
+  let finalMask=mask;
+  if(feather>0){
+    const softened=document.createElement('canvas');softened.width=mask.width;softened.height=mask.height;
+    const sctx=softened.getContext('2d');sctx.filter=`blur(${Math.max(1,feather)}px)`;sctx.drawImage(mask,0,0);sctx.filter='none';sctx.drawImage(mask,0,0);finalMask=softened;
+  }
+  const layer=document.createElement('canvas');layer.width=mask.width;layer.height=mask.height;
+  const lctx=layer.getContext('2d');lctx.drawImage(img,bounds.x,bounds.y,bounds.width,bounds.height,0,0,layer.width,layer.height);lctx.globalCompositeOperation='destination-in';lctx.drawImage(finalMask,0,0);
+  const value={canvas:layer,bounds,geometry};state.maskCache.set(region.id,{signature,value});return value;
+}
+
 function drawPartialMotions(img,scene,placement,elapsedSeconds){
   for(const rawRegion of scene.motionRegions||[]){
     const region=normalizeMotionRegion(rawRegion);
     if(!region.enabled)continue;
-    const geometry=regionSourceGeometry(region,img);
-    if(!geometry||geometry.bounds.width<1||geometry.bounds.height<1)continue;
-    const source=geometry.bounds;
+    const masked=maskedRegionLayer(img,region);
+    if(!masked||masked.bounds.width<1||masked.bounds.height<1)continue;
+    const source=masked.bounds;
     const dest=sourceRectToCanvas(source,placement);
     const motion=evaluateMotion(region,elapsedSeconds);
     const pivotX=dest.x+dest.width*region.motion.pivot.x;
     const pivotY=dest.y+dest.height*region.motion.pivot.y;
 
     ctx.save();
-    ctx.beginPath();
-    if(geometry.points)traceCanvasPolygon(geometry.points,placement);
-    else ctx.rect(dest.x-1,dest.y-1,dest.width+2,dest.height+2);
-    ctx.clip();
     ctx.globalAlpha*=motion.opacity;
     ctx.translate(
       pivotX+motion.translateX*dest.width,
@@ -238,8 +370,7 @@ function drawPartialMotions(img,scene,placement,elapsedSeconds){
     ctx.rotate(motion.rotation*Math.PI/180);
     ctx.scale(motion.scaleX,motion.scaleY);
     ctx.drawImage(
-      img,
-      source.x,source.y,source.width,source.height,
+      masked.canvas,
       -dest.width*region.motion.pivot.x,
       -dest.height*region.motion.pivot.y,
       dest.width,dest.height
@@ -326,6 +457,12 @@ function drawRegionGuide(geometry,label,active,placement){
   ctx.restore();
 }
 
+function drawBrushGuide(stroke,placement){
+  if(!stroke?.points?.length)return;
+  const scaled={...stroke,size:stroke.size*placement.scale,points:stroke.points.map(point=>({x:placement.x+point.x*placement.scale,y:placement.y+point.y*placement.scale}))};
+  ctx.save();ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=scaled.size;ctx.strokeStyle=stroke.mode==='erase'?'rgba(255,107,107,.72)':'rgba(71,211,171,.72)';ctx.fillStyle=ctx.strokeStyle;traceStroke(ctx,scaled);ctx.restore();
+}
+
 function drawMotionGuides(img,scene,placement){
   for(const rawRegion of scene.motionRegions||[]){
     const region=normalizeMotionRegion(rawRegion);
@@ -335,14 +472,21 @@ function drawMotionGuides(img,scene,placement){
       bounds:sourceRectToCanvas(source.bounds,placement),
       points:source.points
     },region.name,region.id===state.selectedMotionRegionId,placement);
+    if(region.id===state.selectedMotionRegionId){
+      const fx=img.naturalWidth/Math.max(1,region.mask.width),fy=img.naturalHeight/Math.max(1,region.mask.height);
+      for(const stroke of region.mask.strokes||[])drawBrushGuide({mode:stroke.mode,size:stroke.size*(fx+fy)/2,points:stroke.points.map(point=>({x:point.x*fx,y:point.y*fy}))},placement);
+    }
   }
   if(state.selectionDraft){
     const draft=state.selectionDraft;
-    const bounds=draft.kind==='polygon'?polygonBounds(draft.points):draft.rect;
-    drawRegionGuide({
-      bounds:sourceRectToCanvas(bounds,placement),
-      points:draft.kind==='polygon'?draft.points:null
-    },'ここを動かす',true,placement);
+    if(draft.kind==='brush')drawBrushGuide(draft,placement);
+    else{
+      const bounds=draft.kind==='polygon'?polygonBounds(draft.points):draft.rect;
+      drawRegionGuide({
+        bounds:sourceRectToCanvas(bounds,placement),
+        points:draft.kind==='polygon'?draft.points:null
+      },'ここを動かす',true,placement);
+    }
   }
 }
 
@@ -369,12 +513,12 @@ function renderSceneList(){
 }
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 function effectLabel(key){return (EFFECTS.find(x=>x[0]===key)||[key,key])[1]}
-function moveScene(i,d){const j=i+d;if(j<0||j>=state.project.scenes.length)return;const a=state.project.scenes;[a[i],a[j]]=[a[j],a[i]];state.selected=j;renderSceneList();syncControls();renderFrame(currentScene(),0)}
+function moveScene(i,d){const j=i+d;if(j<0||j>=state.project.scenes.length)return;const a=state.project.scenes;[a[i],a[j]]=[a[j],a[i]];state.selected=j;renderSceneList();syncControls();renderFrame(currentScene(),0);commitHistory()}
 function selectScene(i){cancelRegionSelection();state.selected=Math.max(0,Math.min(i,state.project.scenes.length-1));state.selectedMotionRegionId=null;stopPlayback();renderSceneList();syncControls();renderFrame(currentScene(),0)}
 
 function setSelectionMode(enabled,kind=state.selectionKind){
   state.selectingRegion=!!enabled;
-  state.selectionKind=kind==='polygon'?'polygon':'rectangle';
+  state.selectionKind=['rectangle','polygon','brush-add','brush-erase'].includes(kind)?kind:'rectangle';
   state.selectionSession=null;
   state.selectionDraft=null;
   canvas.classList.toggle('selecting-region',state.selectingRegion);
@@ -382,6 +526,10 @@ function setSelectionMode(enabled,kind=state.selectionKind){
   $('selectFreeRegionBtn').textContent=state.selectingRegion&&state.selectionKind==='polygon'?'選択をやめる':'＋ 自由に囲む';
   $('selectRegionBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='rectangle');
   $('selectFreeRegionBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='polygon');
+  $('addBrushBtn').textContent=state.selectingRegion&&state.selectionKind==='brush-add'?'ブラシをやめる':'＋ ブラシで足す';
+  $('eraseBrushBtn').textContent=state.selectingRegion&&state.selectionKind==='brush-erase'?'ブラシをやめる':'－ ブラシで消す';
+  $('addBrushBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='brush-add');
+  $('eraseBrushBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='brush-erase');
   $('selectionNotice').hidden=!state.selectingRegion;
   renderFrame(currentScene(),+$('scrubber').value/1000);
 }
@@ -413,6 +561,10 @@ function syncMotionControls(scene){
   $('selectFreeRegionBtn').textContent=state.selectingRegion&&state.selectionKind==='polygon'?'選択をやめる':'＋ 自由に囲む';
   $('selectRegionBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='rectangle');
   $('selectFreeRegionBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='polygon');
+  $('addBrushBtn').textContent=state.selectingRegion&&state.selectionKind==='brush-add'?'ブラシをやめる':'＋ ブラシで足す';
+  $('eraseBrushBtn').textContent=state.selectingRegion&&state.selectionKind==='brush-erase'?'ブラシをやめる':'－ ブラシで消す';
+  $('addBrushBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='brush-add');
+  $('eraseBrushBtn').classList.toggle('primary',state.selectingRegion&&state.selectionKind==='brush-erase');
   $('selectionNotice').hidden=!state.selectingRegion;
 }
 
@@ -429,7 +581,7 @@ function syncControls(){
   syncMotionControls(s);
 }
 
-function setupEffectsUI(){const root=$('effectChecks');for(const [key,label] of EFFECTS){const lab=document.createElement('label');lab.className='effect-chip';const cb=document.createElement('input');cb.type='checkbox';cb.dataset.effect=key;cb.onchange=()=>{const s=currentScene();s.effects=[...document.querySelectorAll('[data-effect]:checked')].map(x=>x.dataset.effect);renderSceneList();renderFrame(s,+$('scrubber').value/1000)};lab.append(cb,document.createTextNode(label));root.append(lab)}}
+function setupEffectsUI(){const root=$('effectChecks');for(const [key,label] of EFFECTS){const lab=document.createElement('label');lab.className='effect-chip';const cb=document.createElement('input');cb.type='checkbox';cb.dataset.effect=key;cb.onchange=()=>{const s=currentScene();s.effects=[...document.querySelectorAll('[data-effect]:checked')].map(x=>x.dataset.effect);renderSceneList();renderFrame(s,+$('scrubber').value/1000);commitHistory()};lab.append(cb,document.createTextNode(label));root.append(lab)}}
 
 function inferEffects(text){
   text=text||'';const out=[];
@@ -463,8 +615,13 @@ async function beginRegionSelection(event){
     const placement=coverPlacement(img,canvas.width,canvas.height,scene,t);
     const imageSize={width:img.naturalWidth,height:img.naturalHeight};
     const start=canvasPointToSource(canvasPoint(event),placement,imageSize);
-    state.selectionSession={pointerId:event.pointerId,sceneId:scene.id,start,placement,imageSize,kind:state.selectionKind};
-    state.selectionDraft=state.selectionKind==='polygon'
+    const isBrush=state.selectionKind.startsWith('brush-');
+    const region=isBrush?currentMotionRegion():null;
+    if(isBrush&&!region)throw new Error('region missing');
+    state.selectionSession={pointerId:event.pointerId,sceneId:scene.id,regionId:region?.id||null,start,placement,imageSize,kind:state.selectionKind};
+    state.selectionDraft=isBrush
+      ?{kind:'brush',mode:state.selectionKind==='brush-erase'?'erase':'add',size:+$('brushSize').value||36,points:[start]}
+      :state.selectionKind==='polygon'
       ?{kind:'polygon',points:[start]}
       :{kind:'rectangle',rect:{x:start.x,y:start.y,width:0,height:0}};
     canvas.setPointerCapture?.(event.pointerId);
@@ -480,13 +637,15 @@ function updateRegionSelection(event){
   if(!session||session.pointerId!==event.pointerId||session.sceneId!==currentScene()?.id)return;
   event.preventDefault();
   const point=canvasPointToSource(canvasPoint(event),session.placement,session.imageSize);
-  if(session.kind==='polygon'){
+  if(session.kind==='polygon'||session.kind.startsWith('brush-')){
     const points=state.selectionDraft?.points||[];
     const last=points[points.length-1];
     if(!last||Math.hypot(point.x-last.x,point.y-last.y)>=5/session.placement.scale){
       points.push(point);
     }
-    state.selectionDraft={kind:'polygon',points};
+    state.selectionDraft=session.kind==='polygon'
+      ?{kind:'polygon',points}
+      :{...state.selectionDraft,points};
   }else{
     state.selectionDraft={kind:'rectangle',rect:rectFromPoints(session.start,point)};
   }
@@ -499,6 +658,18 @@ function finishRegionSelection(event){
   updateRegionSelection(event);
   const draft=state.selectionDraft;
   state.selectionSession=null;
+  if(draft?.kind==='brush'){
+    const scene=currentScene();
+    const region=(scene.motionRegions||[]).find(item=>item.id===session.regionId);
+    if(region&&draft.points.length){
+      const fx=region.mask.width/session.imageSize.width,fy=region.mask.height/session.imageSize.height;
+      region.mask.strokes ||= [];
+      region.mask.strokes.push({mode:draft.mode,size:draft.size*(fx+fy)/2,points:draft.points.map(point=>({x:point.x*fx,y:point.y*fy}))});
+      state.maskCache.delete(region.id);
+      commitHistory();
+    }
+    setSelectionMode(false);syncMotionControls(scene);renderFrame(scene,+$('scrubber').value/1000);return;
+  }
   const bounds=draft?.kind==='polygon'?polygonBounds(draft.points):draft?.rect;
   if(!bounds||bounds.width<8||bounds.height<8||(draft.kind==='polygon'&&draft.points.length<3)){
     state.selectionDraft=null;
@@ -528,6 +699,8 @@ function finishRegionSelection(event){
   scene.motionRegions ||= [];
   scene.motionRegions.push(region);
   state.selectedMotionRegionId=region.id;
+  state.maskCache.delete(region.id);
+  commitHistory();
   setSelectionMode(false);
   syncMotionControls(scene);
   renderFrame(scene,+$('scrubber').value/1000);
@@ -538,27 +711,31 @@ function removeCurrentMotionRegion(){
   const index=(scene.motionRegions||[]).findIndex(region=>region.id===state.selectedMotionRegionId);
   if(index<0)return;
   scene.motionRegions.splice(index,1);
+  state.maskCache.delete(state.selectedMotionRegionId);
   state.selectedMotionRegionId=scene.motionRegions[Math.min(index,scene.motionRegions.length-1)]?.id||null;
   syncMotionControls(scene);
   renderFrame(scene,+$('scrubber').value/1000);
+  commitHistory();
 }
 
 function updateMotionControl(mutator){
   const region=currentMotionRegion();if(!region)return;
   mutator(region);
+  state.maskCache.delete(region.id);
   renderFrame(currentScene(),+$('scrubber').value/1000);
+  queueHistoryCommit();
 }
 
 function bindControls(){
-  $('sceneName').oninput=e=>{currentScene().name=e.target.value;renderSceneList()};
-  $('narrationText').oninput=e=>{currentScene().narration=e.target.value};
-  $('durationInput').oninput=e=>{const scene=currentScene(),previous=scene.duration;scene.duration=Math.max(1,+e.target.value||1);if(scene.ambientDuration==null||scene.ambientDuration>=previous)scene.ambientDuration=scene.duration;else scene.ambientDuration=Math.min(scene.ambientDuration,scene.duration);$('ambientDuration').value=scene.ambientDuration;renderSceneList()};
-  $('imageFitSelect').onchange=e=>{currentScene().imageFit=e.target.value==='contain'?'contain':'cover';renderFrame(currentScene(),+$('scrubber').value/1000)};
-  $('cameraSelect').onchange=e=>{currentScene().camera=e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000)};
-  $('textLock').onchange=e=>{currentScene().textLock=e.target.checked;renderFrame(currentScene(),+$('scrubber').value/1000)};
-  $('effectStrength').oninput=e=>{currentScene().effectStrength=+e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000)};
-  $('autoDurationBtn').onclick=()=>{const s=currentScene(),previous=s.duration;s.duration=estimateDuration(s.narration);if(s.ambientDuration==null||s.ambientDuration>=previous)s.ambientDuration=s.duration;else s.ambientDuration=Math.min(s.ambientDuration,s.duration);$('durationInput').value=s.duration;$('ambientDuration').value=s.ambientDuration;renderSceneList()};
-  $('autoEffectBtn').onclick=()=>{const s=currentScene();s.effects=inferEffects(s.narration);syncControls();renderSceneList();renderFrame(s,0)};
+  $('sceneName').oninput=e=>{currentScene().name=e.target.value;renderSceneList();queueHistoryCommit()};
+  $('narrationText').oninput=e=>{currentScene().narration=e.target.value;queueHistoryCommit()};
+  $('durationInput').oninput=e=>{const scene=currentScene(),previous=scene.duration;scene.duration=Math.max(1,+e.target.value||1);if(scene.ambientDuration==null||scene.ambientDuration>=previous)scene.ambientDuration=scene.duration;else scene.ambientDuration=Math.min(scene.ambientDuration,scene.duration);$('ambientDuration').value=scene.ambientDuration;renderSceneList();queueHistoryCommit()};
+  $('imageFitSelect').onchange=e=>{currentScene().imageFit=e.target.value==='contain'?'contain':'cover';renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
+  $('cameraSelect').onchange=e=>{currentScene().camera=e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
+  $('textLock').onchange=e=>{currentScene().textLock=e.target.checked;renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
+  $('effectStrength').oninput=e=>{currentScene().effectStrength=+e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000);queueHistoryCommit()};
+  $('autoDurationBtn').onclick=()=>{const s=currentScene(),previous=s.duration;s.duration=estimateDuration(s.narration);if(s.ambientDuration==null||s.ambientDuration>=previous)s.ambientDuration=s.duration;else s.ambientDuration=Math.min(s.ambientDuration,s.duration);$('durationInput').value=s.duration;$('ambientDuration').value=s.ambientDuration;renderSceneList();commitHistory()};
+  $('autoEffectBtn').onclick=()=>{const s=currentScene();s.effects=inferEffects(s.narration);syncControls();renderSceneList();renderFrame(s,0);commitHistory()};
   $('selectRegionBtn').onclick=()=>{
     const active=state.selectingRegion&&state.selectionKind==='rectangle';
     $('selectionNotice').textContent='画像の上をドラッグして四角く囲みます。';
@@ -569,6 +746,17 @@ function bindControls(){
     $('selectionNotice').textContent='動かしたい物の輪郭を、指やマウスで一周なぞってください。';
     setSelectionMode(!active,'polygon');
   };
+  $('addBrushBtn').onclick=()=>{
+    const active=state.selectingRegion&&state.selectionKind==='brush-add';
+    $('selectionNotice').textContent='足したい部分を指やマウスで塗ってください。緑色が追加です。';
+    setSelectionMode(!active,'brush-add');
+  };
+  $('eraseBrushBtn').onclick=()=>{
+    const active=state.selectingRegion&&state.selectionKind==='brush-erase';
+    $('selectionNotice').textContent='除きたい部分を指やマウスで塗ってください。赤色が削除です。';
+    setSelectionMode(!active,'brush-erase');
+  };
+  $('brushSize').oninput=e=>$('brushSizeValue').textContent=`${Math.round(+e.target.value)} px`;
   $('motionRegionSelect').onchange=e=>{state.selectedMotionRegionId=e.target.value;syncMotionControls(currentScene());renderFrame(currentScene(),+$('scrubber').value/1000)};
   $('motionEnabled').onchange=e=>updateMotionControl(region=>region.enabled=e.target.checked);
   $('motionTypeSelect').onchange=e=>updateMotionControl(region=>{region.motion.type=e.target.value;region.motion.pivot=e.target.value==='sway'?{x:.5,y:1}:{x:.5,y:.5}});
@@ -586,22 +774,24 @@ function bindControls(){
   $('speakBtn').onclick=()=>speakCurrent();
   $('narrationAudio').onchange=e=>{ensureRuntime(currentScene()).narrationFile=e.target.files[0]||null;syncControls()};
   $('ambientAudio').onchange=e=>{ensureRuntime(currentScene()).ambientFile=e.target.files[0]||null;syncControls()};
-  $('narrationVolume').oninput=e=>{const value=+e.target.value;currentScene().narrationVolume=value;$('narrationVolumeValue').textContent=`${Math.round(value*100)}%`};
-  $('ambientVolume').oninput=e=>{const value=+e.target.value;currentScene().ambientVolume=value;$('ambientVolumeValue').textContent=`${Math.round(value*100)}%`};
-  $('ambientDuration').oninput=e=>{currentScene().ambientDuration=Math.max(.5,Math.min(currentScene().duration,+e.target.value||currentScene().duration));e.target.value=currentScene().ambientDuration};
+  $('narrationVolume').oninput=e=>{const value=+e.target.value;currentScene().narrationVolume=value;$('narrationVolumeValue').textContent=`${Math.round(value*100)}%`;queueHistoryCommit()};
+  $('ambientVolume').oninput=e=>{const value=+e.target.value;currentScene().ambientVolume=value;$('ambientVolumeValue').textContent=`${Math.round(value*100)}%`;queueHistoryCommit()};
+  $('ambientDuration').oninput=e=>{currentScene().ambientDuration=Math.max(.5,Math.min(currentScene().duration,+e.target.value||currentScene().duration));e.target.value=currentScene().ambientDuration;queueHistoryCommit()};
   $('bgmAudio').onchange=e=>{state.bgmFile=e.target.files[0]||null;syncControls()};
-  $('bgmVolume').oninput=e=>state.project.bgmVolume=+e.target.value;
-  $('resolutionSelect').onchange=e=>setResolution(e.target.value);
+  $('bgmVolume').oninput=e=>{state.project.bgmVolume=+e.target.value;queueHistoryCommit()};
+  $('resolutionSelect').onchange=e=>{setResolution(e.target.value);commitHistory()};
   $('removeSceneBtn').onclick=removeCurrentScene;$('addSceneBtn').onclick=addBlankScene;
   $('importImagesBtn').onclick=()=>$('imageInput').click();$('imageInput').onchange=e=>addImages([...e.target.files]);
   $('saveProjectBtn').onclick=saveProjectJson;$('importProjectBtn').onclick=()=>$('projectInput').click();$('projectInput').onchange=e=>loadProjectJson(e.target.files[0]);
+  $('undoBtn').onclick=undo;$('redoBtn').onclick=redo;
+  document.addEventListener('keydown',event=>{const tag=document.activeElement?.tagName;if(['INPUT','TEXTAREA','SELECT'].includes(tag))return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();event.shiftKey?redo():undo()}else if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='y'){event.preventDefault();redo()}});
   $('exportBtn').onclick=exportWebM;
 }
 function ensureRuntime(s){if(!s.runtime)s.runtime={narrationFile:null,ambientFile:null};return s.runtime}
 function setResolution(v){const [w,h]=v.split('x').map(Number);state.project.width=w;state.project.height=h;canvas.width=w;canvas.height=h;renderFrame(currentScene(),+$('scrubber').value/1000)}
-function addBlankScene(){state.project.scenes.push({id:crypto.randomUUID(),name:`シーン${state.project.scenes.length+1}`,image:'',imageObjectUrl:null,narration:'',duration:5,narrationVolume:1,ambientVolume:.55,ambientDuration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}});selectScene(state.project.scenes.length-1)}
-function removeCurrentScene(){if(state.project.scenes.length<=1)return;state.project.scenes.splice(state.selected,1);state.selected=Math.min(state.selected,state.project.scenes.length-1);selectScene(state.selected)}
-function addImages(files){for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,narrationVolume:1,ambientVolume:.55,ambientDuration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length)}
+function addBlankScene(){state.project.scenes.push({id:crypto.randomUUID(),name:`シーン${state.project.scenes.length+1}`,image:'',imageObjectUrl:null,narration:'',duration:5,narrationVolume:1,ambientVolume:.55,ambientDuration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}});selectScene(state.project.scenes.length-1);commitHistory()}
+function removeCurrentScene(){if(state.project.scenes.length<=1)return;state.project.scenes.splice(state.selected,1);state.selected=Math.min(state.selected,state.project.scenes.length-1);selectScene(state.selected);commitHistory()}
+function addImages(files){if(!files.length)return;for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,narrationVolume:1,ambientVolume:.55,ambientDuration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length);commitHistory()}
 
 function stopPlayback(){state.playToken++;state.playing=false;for(const a of state.audioPreview){try{a.pause()}catch{}}state.audioPreview=[];for(const src of state.generatedAmbient){try{src.stop()}catch{}}state.generatedAmbient=[]}
 async function previewCurrentMotion(){
@@ -642,7 +832,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 function serializableProject(){return {...state.project,scenes:state.project.scenes.map(({runtime,imageObjectUrl,...s})=>({...s,imageObjectUrl:null}))}}
 function saveProjectJson(){const blob=new Blob([JSON.stringify(serializableProject(),null,2)],{type:'application/json'});downloadBlob(blob,'stillmotion-project.json')}
-async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(s=>normalizeSceneMotion({...s,id:s.id||crypto.randomUUID(),imageFit:s.imageFit==='contain'?'contain':'cover',narrationVolume:Number.isFinite(+s.narrationVolume)?Math.max(0,Math.min(1,+s.narrationVolume)):1,ambientVolume:Number.isFinite(+s.ambientVolume)?Math.max(0,Math.min(1,+s.ambientVolume)):.55,ambientDuration:Number.isFinite(+s.ambientDuration)?Math.max(.5,Math.min(+s.duration||5,+s.ambientDuration)):(+s.duration||5),runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;state.selectedMotionRegionId=null;setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0)}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
+async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(s=>normalizeSceneMotion({...s,id:s.id||crypto.randomUUID(),imageFit:s.imageFit==='contain'?'contain':'cover',narrationVolume:Number.isFinite(+s.narrationVolume)?Math.max(0,Math.min(1,+s.narrationVolume)):1,ambientVolume:Number.isFinite(+s.ambientVolume)?Math.max(0,Math.min(1,+s.ambientVolume)):.55,ambientDuration:Number.isFinite(+s.ambientDuration)?Math.max(.5,Math.min(+s.duration||5,+s.ambientDuration)):(+s.duration||5),runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;state.selectedMotionRegionId=null;state.maskCache.clear();setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0);resetHistory()}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
 
 async function decodeFile(ctx,file){if(!file)return null;return ctx.decodeAudioData(await file.arrayBuffer())}
@@ -673,5 +863,5 @@ async function exportWebM(){
   if(bgmSrc)try{bgmSrc.stop()}catch{};rec.stop();await stopped;await audioCtx.close();const blob=new Blob(chunks,{type:mime||'video/webm'});downloadBlob(blob,`${state.project.title||'stillmotion'}.webm`);state.exporting=false;$('exportStatus').textContent='完了。WebMを保存しました。';$('exportProgress').value=1;$('exportBtn').disabled=false;renderFrame(currentScene(),1);
 }
 
-function init(){setupEffectsUI();bindControls();setResolution('720x960');renderSceneList();syncControls();renderFrame(currentScene(),0)}
+function init(){setupEffectsUI();bindControls();setResolution('720x960');renderSceneList();syncControls();renderFrame(currentScene(),0);resetHistory()}
 init();

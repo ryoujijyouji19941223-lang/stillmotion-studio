@@ -13,6 +13,10 @@
       <p>静止画に小さな動き・読み上げ・環境音を足して「疑似映像」にする試作機</p>
     </div>
     <div class="top-actions">
+      <div class="history-actions" aria-label="編集履歴">
+        <button id="undoBtn" title="ひとつ前に戻す" disabled>↶ 戻す</button>
+        <button id="redoBtn" title="やり直す" disabled>↷ やり直す</button>
+      </div>
       <button id="importImagesBtn">画像を追加</button>
       <input id="imageInput" type="file" accept="image/*" multiple hidden />
       <button id="importProjectBtn">JSON読込</button>
@@ -125,6 +129,17 @@
             <select id="motionRegionSelect"></select>
           </label>
           <label class="check-row"><input id="motionEnabled" type="checkbox" /> この範囲を動かす</label>
+          <div class="brush-editor">
+            <div class="setting-subtitle">選択範囲を微調整</div>
+            <div class="selection-actions">
+              <button id="addBrushBtn" class="small">＋ ブラシで足す</button>
+              <button id="eraseBrushBtn" class="small erase-button">－ ブラシで消す</button>
+            </div>
+            <label>ブラシサイズ <output id="brushSizeValue">36 px</output>
+              <input id="brushSize" type="range" min="8" max="180" value="36" step="4" />
+            </label>
+            <p class="setting-help">緑は追加、赤は削除です。間違えたら上の「戻す」で取り消せます。</p>
+          </div>
           <label>動き
             <select id="motionTypeSelect">
               <option value="sway">ゆらゆら揺れる</option>
@@ -198,8 +213,8 @@
   </main>
 
   <footer>
-    <strong>v0.2 preview:</strong> 四角選択と自由選択で、画像の一部分だけに小さな動きを付けられます。
-    <span>音量と環境音の長さもシーンごとに調整できます。</span>
+    <strong>v0.2 preview:</strong> 自由選択をブラシで直し、画像の一部分だけに小さな動きを付けられます。
+    <span>操作は「戻す／やり直す」で修正できます。</span>
   </footer>
 
   <script type="module" src="app.js"></script>
