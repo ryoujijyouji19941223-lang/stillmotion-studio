@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StillMotion Studio v0.1</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>StillMotion Studio <span>v0.1</span></h1>
+      <p>静止画に小さな動き・読み上げ・環境音を足して「疑似映像」にする試作機</p>
+    </div>
+    <div class="top-actions">
+      <button id="importImagesBtn">画像を追加</button>
+      <input id="imageInput" type="file" accept="image/*" multiple hidden />
+      <button id="importProjectBtn">JSON読込</button>
+      <input id="projectInput" type="file" accept="application/json,.json" hidden />
+      <button id="saveProjectBtn">JSON保存</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="scenes-panel panel">
+      <div class="panel-title-row">
+        <h2>シーン</h2>
+        <button id="addSceneBtn" class="small">＋</button>
+      </div>
+      <div id="sceneList" class="scene-list"></div>
+    </aside>
+
+    <section class="preview-panel panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>プレビュー</h2>
+          <div id="sceneStatus" class="muted"></div>
+        </div>
+        <label class="resolution-label">出力
+          <select id="resolutionSelect">
+            <option value="540x720">540×720</option>
+            <option value="720x960" selected>720×960</option>
+            <option value="1080x1440">1080×1440</option>
+          </select>
+        </label>
+      </div>
+      <div class="canvas-shell">
+        <canvas id="preview" width="720" height="960"></canvas>
+      </div>
+      <div class="transport">
+        <button id="prevBtn">◀ 前</button>
+        <button id="playSceneBtn" class="primary">▶ このシーン</button>
+        <button id="playAllBtn">▶ 全体</button>
+        <button id="nextBtn">次 ▶</button>
+      </div>
+      <div class="timeline-row">
+        <input id="scrubber" type="range" min="0" max="1000" value="0" />
+        <span id="timeLabel">0.0 / 0.0 秒</span>
+      </div>
+      <div class="export-box">
+        <div>
+          <strong>動画書き出し（WebM）</strong>
+          <p>Chrome / Edge向け。アップロードした音声と、雨・風の自動環境音も混ぜて実時間で録画します。</p>
+        </div>
+        <button id="exportBtn" class="primary">WebMを書き出す</button>
+      </div>
+      <progress id="exportProgress" value="0" max="1"></progress>
+      <div id="exportStatus" class="muted"></div>
+    </section>
+
+    <aside class="controls-panel panel">
+      <h2>シーン設定</h2>
+      <label>シーン名
+        <input id="sceneName" type="text" />
+      </label>
+      <label>読み上げ文章
+        <textarea id="narrationText" rows="8"></textarea>
+      </label>
+      <div class="two-col">
+        <label>表示時間（秒）
+          <input id="durationInput" type="number" min="1" max="120" step="0.1" />
+        </label>
+        <div class="button-label">
+          <span>文章から推定</span>
+          <button id="autoDurationBtn">自動</button>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <h3>画像の動き</h3>
+        <label>カメラ
+          <select id="cameraSelect">
+            <option value="none">固定</option>
+            <option value="zoom-in">ゆっくり寄る</option>
+            <option value="zoom-out">ゆっくり引く</option>
+            <option value="pan-left">左へパン</option>
+            <option value="pan-right">右へパン</option>
+            <option value="float">ごく小さく漂う</option>
+          </select>
+        </label>
+        <label class="check-row"><input id="textLock" type="checkbox" /> 文字保護モード（画像全体は動かさず、上の効果だけ動かす）</label>
+      </div>
+
+      <div class="setting-group">
+        <div class="panel-title-row compact">
+          <h3>重ねる効果</h3>
+          <button id="autoEffectBtn" class="small">文章から提案</button>
+        </div>
+        <div id="effectChecks" class="effect-grid"></div>
+        <label>効果の強さ
+          <input id="effectStrength" type="range" min="0" max="1" step="0.05" />
+        </label>
+      </div>
+
+      <div class="setting-group">
+        <h3>音</h3>
+        <button id="speakBtn">🔊 ブラウザ音声で試聴</button>
+        <label>ナレーション音声ファイル
+          <input id="narrationAudio" type="file" accept="audio/*" />
+        </label>
+        <div id="narrationAudioName" class="muted">未設定</div>
+        <label>このシーンの効果音 / 環境音
+          <input id="ambientAudio" type="file" accept="audio/*" />
+        </label>
+        <div id="ambientAudioName" class="muted">未設定</div>
+      </div>
+
+      <div class="setting-group">
+        <h3>全体BGM</h3>
+        <input id="bgmAudio" type="file" accept="audio/*" />
+        <div id="bgmAudioName" class="muted">未設定</div>
+        <label>BGM音量
+          <input id="bgmVolume" type="range" min="0" max="1" value="0.35" step="0.05" />
+        </label>
+      </div>
+
+      <div class="setting-group danger-zone">
+        <button id="removeSceneBtn">このシーンを削除</button>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <strong>v0.1:</strong> 静止画・カメラ・雨/風/葉/光/蝶・読み上げプレビュー・音声アップロード・WebM書き出し・JSON保存まで。
+    <span>次: 範囲選択 → 木やカーテンだけ動かす「レイヤー化」。</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
