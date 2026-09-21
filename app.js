@@ -1,4 +1,11 @@
-'use strict';
+import {
+  canvasPointToSource,
+  evaluateMotion,
+  normalizeMotionRegion,
+  normalizeSceneMotion,
+  rectFromPoints,
+  sourceRectToCanvas
+} from './src/v0.2/partial-motion.mjs';
 
 const EFFECTS = [
   ['rain','雨'], ['wind','風'], ['leaves','葉っぱ'], ['glow','木漏れ日'],
@@ -57,7 +64,11 @@ const state = {
       textLock: true,
       effects: SAMPLE_EFFECTS[i],
       effectStrength: i === 15 || i === 16 ? 0.9 : 0.55,
-      motionRegions: [],
+      motionRegions: i===11?[{
+        id:'sample-tree-canopy',name:'木の葉（見本）',enabled:true,zIndex:0,
+        mask:{kind:'rectangle',width:960,height:1440,rect:{x:430,y:0,width:530,height:370},source:null,feather:12,invert:false},
+        motion:{type:'sway',amplitude:.18,speed:.25,phase:0,axis:'x',pivot:{x:.82,y:1}}
+      }]:[],
       runtime: { narrationFile:null, ambientFile:null }
     }))
   },
@@ -67,7 +78,12 @@ const state = {
   playing: false,
   playToken: 0,
   bgmFile: null,
-  audioPreview: []
+  audioPreview: [],
+  selectedMotionRegionId: null,
+  selectingRegion: false,
+  selectionSession: null,
+  selectionDraft: null,
+  exporting: false
 };
 
 const $ = (id) => document.getElementById(id);
@@ -75,6 +91,9 @@ const canvas = $('preview');
 const ctx = canvas.getContext('2d');
 
 function currentScene(){ return state.project.scenes[state.selected]; }
+function currentMotionRegion(){
+  return (currentScene()?.motionRegions || []).find(region => region.id === state.selectedMotionRegionId) || null;
+}
 
 function seeded(seed){
   let s = seed >>> 0;
@@ -102,7 +121,7 @@ async function loadImage(src){
   img.src=src; state.images.set(src,p); return p;
 }
 
-function drawCover(img,w,h,scene,t){
+function coverPlacement(img,w,h,scene,t){
   const sw=img.naturalWidth, sh=img.naturalHeight;
   let base = Math.max(w/sw,h/sh);
   let scale=base, dx=0, dy=0;
@@ -119,7 +138,61 @@ function drawCover(img,w,h,scene,t){
     if(scene.camera==='pan-right') dx = (.5-t)*w*.055;
     if(scene.camera==='float'){dx=Math.sin(t*Math.PI*2)*w*.008;dy=Math.cos(t*Math.PI*2)*h*.006}
   }
-  ctx.drawImage(img,x+dx,y+dy,dw,dh);
+  return {x:x+dx,y:y+dy,width:dw,height:dh,scale};
+}
+
+function drawCover(img,w,h,scene,t){
+  const placement=coverPlacement(img,w,h,scene,t);
+  ctx.drawImage(img,placement.x,placement.y,placement.width,placement.height);
+  return placement;
+}
+
+function regionSourceRect(region,img){
+  if(region.mask.kind!=='rectangle'||!region.mask.rect)return null;
+  const fx=img.naturalWidth/Math.max(1,region.mask.width);
+  const fy=img.naturalHeight/Math.max(1,region.mask.height);
+  const raw=region.mask.rect;
+  const x=Math.max(0,Math.min(img.naturalWidth,raw.x*fx));
+  const y=Math.max(0,Math.min(img.naturalHeight,raw.y*fy));
+  return {
+    x,
+    y,
+    width:Math.max(0,Math.min(img.naturalWidth-x,raw.width*fx)),
+    height:Math.max(0,Math.min(img.naturalHeight-y,raw.height*fy))
+  };
+}
+
+function drawPartialMotions(img,scene,placement,elapsedSeconds){
+  for(const rawRegion of scene.motionRegions||[]){
+    const region=normalizeMotionRegion(rawRegion);
+    if(!region.enabled)continue;
+    const source=regionSourceRect(region,img);
+    if(!source||source.width<1||source.height<1)continue;
+    const dest=sourceRectToCanvas(source,placement);
+    const motion=evaluateMotion(region,elapsedSeconds);
+    const pivotX=dest.x+dest.width*region.motion.pivot.x;
+    const pivotY=dest.y+dest.height*region.motion.pivot.y;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(dest.x-1,dest.y-1,dest.width+2,dest.height+2);
+    ctx.clip();
+    ctx.globalAlpha*=motion.opacity;
+    ctx.translate(
+      pivotX+motion.translateX*dest.width,
+      pivotY+motion.translateY*dest.height
+    );
+    ctx.rotate(motion.rotation*Math.PI/180);
+    ctx.scale(motion.scaleX,motion.scaleY);
+    ctx.drawImage(
+      img,
+      source.x,source.y,source.width,source.height,
+      -dest.width*region.motion.pivot.x,
+      -dest.height*region.motion.pivot.y,
+      dest.width,dest.height
+    );
+    ctx.restore();
+  }
 }
 
 function drawEffects(scene,t,w,h){
@@ -169,10 +242,45 @@ function drawEffects(scene,t,w,h){
 }
 function iColor(phase){return ['#6f9d4a','#a4b94a','#d29a42','#7ca35b'][Math.floor((phase/6.28)*4)%4]}
 
+function drawRegionGuide(rect,label,active){
+  ctx.save();
+  ctx.fillStyle=active?'rgba(76,184,255,.16)':'rgba(76,184,255,.07)';
+  ctx.fillRect(rect.x,rect.y,rect.width,rect.height);
+  ctx.strokeStyle=active?'#7bd2ff':'rgba(123,210,255,.65)';
+  ctx.lineWidth=Math.max(2,canvas.width/360);
+  ctx.setLineDash(active?[]:[9,7]);
+  ctx.strokeRect(rect.x,rect.y,rect.width,rect.height);
+  ctx.setLineDash([]);
+  ctx.font=`${Math.max(12,canvas.width/48)}px sans-serif`;
+  const text=String(label||'動かす範囲');
+  const textWidth=ctx.measureText(text).width;
+  const labelHeight=Math.max(20,canvas.width/30);
+  const labelY=Math.max(0,rect.y-labelHeight);
+  ctx.fillStyle=active?'rgba(19,105,154,.95)':'rgba(32,62,82,.9)';
+  ctx.fillRect(rect.x,labelY,textWidth+14,labelHeight);
+  ctx.fillStyle='#fff';
+  ctx.fillText(text,rect.x+7,labelY+labelHeight*.72);
+  ctx.restore();
+}
+
+function drawMotionGuides(img,scene,placement){
+  for(const rawRegion of scene.motionRegions||[]){
+    const region=normalizeMotionRegion(rawRegion);
+    const source=regionSourceRect(region,img);
+    if(!source)continue;
+    drawRegionGuide(sourceRectToCanvas(source,placement),region.name,region.id===state.selectedMotionRegionId);
+  }
+  if(state.selectionDraft){
+    drawRegionGuide(sourceRectToCanvas(state.selectionDraft,placement),'ここを動かす',true);
+  }
+}
+
 async function renderFrame(scene, norm){
   const w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);ctx.fillStyle='#111';ctx.fillRect(0,0,w,h);
-  try{const img=await loadImage(scene.imageObjectUrl||scene.image);if(img)drawCover(img,w,h,scene,Math.max(0,Math.min(1,norm)));}catch(e){drawMissing(scene)}
-  drawEffects(scene,Math.max(0,Math.min(1,norm)),w,h);
+  const t=Math.max(0,Math.min(1,norm));let img=null,placement=null;
+  try{img=await loadImage(scene.imageObjectUrl||scene.image);if(img){placement=drawCover(img,w,h,scene,t);drawPartialMotions(img,scene,placement,t*scene.duration)}}catch(e){drawMissing(scene)}
+  drawEffects(scene,t,w,h);
+  if(img&&placement&&!state.playing&&!state.exporting)drawMotionGuides(img,scene,placement);
 }
 function drawMissing(scene){ctx.fillStyle='#222';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#bbb';ctx.font='22px sans-serif';ctx.fillText('画像を追加してください',30,50)}
 
@@ -181,7 +289,7 @@ function renderSceneList(){
   state.project.scenes.forEach((s,i)=>{
     const el=document.createElement('div');el.className='scene-card'+(i===state.selected?' active':'');
     const img=document.createElement('img');img.src=s.imageObjectUrl||s.image||'';
-    const mid=document.createElement('div');mid.innerHTML=`<div class="title">${escapeHtml(s.name||`Scene ${i+1}`)}</div><div class="meta">${s.duration.toFixed(1)}秒 · ${(s.effects||[]).map(effectLabel).join(' / ')||'効果なし'}</div>`;
+    const mid=document.createElement('div');const motionMeta=(s.motionRegions||[]).length?` · 部分${s.motionRegions.length}`:'';mid.innerHTML=`<div class="title">${escapeHtml(s.name||`Scene ${i+1}`)}</div><div class="meta">${s.duration.toFixed(1)}秒 · ${(s.effects||[]).map(effectLabel).join(' / ')||'効果なし'}${motionMeta}</div>`;
     const order=document.createElement('div');order.className='order';
     const up=document.createElement('button');up.textContent='▲';up.onclick=(e)=>{e.stopPropagation();moveScene(i,-1)};
     const dn=document.createElement('button');dn.textContent='▼';dn.onclick=(e)=>{e.stopPropagation();moveScene(i,1)};
@@ -191,7 +299,44 @@ function renderSceneList(){
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 function effectLabel(key){return (EFFECTS.find(x=>x[0]===key)||[key,key])[1]}
 function moveScene(i,d){const j=i+d;if(j<0||j>=state.project.scenes.length)return;const a=state.project.scenes;[a[i],a[j]]=[a[j],a[i]];state.selected=j;renderSceneList();syncControls();renderFrame(currentScene(),0)}
-function selectScene(i){state.selected=Math.max(0,Math.min(i,state.project.scenes.length-1));stopPlayback();renderSceneList();syncControls();renderFrame(currentScene(),0)}
+function selectScene(i){cancelRegionSelection();state.selected=Math.max(0,Math.min(i,state.project.scenes.length-1));state.selectedMotionRegionId=null;stopPlayback();renderSceneList();syncControls();renderFrame(currentScene(),0)}
+
+function setSelectionMode(enabled){
+  state.selectingRegion=!!enabled;
+  state.selectionSession=null;
+  state.selectionDraft=null;
+  canvas.classList.toggle('selecting-region',state.selectingRegion);
+  $('selectRegionBtn').textContent=state.selectingRegion?'選択をやめる':'＋ 範囲を選ぶ';
+  $('selectionNotice').hidden=!state.selectingRegion;
+  renderFrame(currentScene(),+$('scrubber').value/1000);
+}
+function cancelRegionSelection(){if(state.selectingRegion||state.selectionDraft)setSelectionMode(false)}
+
+function syncMotionControls(scene){
+  scene.motionRegions=Array.isArray(scene.motionRegions)?scene.motionRegions:[];
+  if(!scene.motionRegions.some(region=>region.id===state.selectedMotionRegionId)){
+    state.selectedMotionRegionId=scene.motionRegions[0]?.id||null;
+  }
+  const select=$('motionRegionSelect');select.innerHTML='';
+  scene.motionRegions.forEach((region,index)=>{
+    const option=document.createElement('option');option.value=region.id;option.textContent=region.name||`範囲 ${index+1}`;select.append(option);
+  });
+  const region=currentMotionRegion();
+  $('motionEmpty').hidden=!!region;
+  $('motionEditor').hidden=!region;
+  if(region){
+    select.value=region.id;
+    $('motionEnabled').checked=region.enabled!==false;
+    $('motionTypeSelect').value=region.motion?.type||'sway';
+    $('motionStrength').value=region.motion?.amplitude??.25;
+    $('motionSpeed').value=region.motion?.speed??.4;
+    $('motionStrengthValue').textContent=`${Math.round((region.motion?.amplitude??.25)*100)}%`;
+    $('motionSpeedValue').textContent=`${Math.round((region.motion?.speed??.4)*100)}%`;
+  }
+  canvas.classList.toggle('selecting-region',state.selectingRegion);
+  $('selectRegionBtn').textContent=state.selectingRegion?'選択をやめる':'＋ 範囲を選ぶ';
+  $('selectionNotice').hidden=!state.selectingRegion;
+}
 
 function syncControls(){
   const s=currentScene(); if(!s) return;
@@ -199,6 +344,7 @@ function syncControls(){
   [...document.querySelectorAll('[data-effect]')].forEach(el=>el.checked=(s.effects||[]).includes(el.dataset.effect));
   $('narrationAudioName').textContent=s.runtime?.narrationFile?.name||'未設定';$('ambientAudioName').textContent=s.runtime?.ambientFile?.name||'未設定';$('bgmAudioName').textContent=state.bgmFile?.name||'未設定';$('bgmVolume').value=state.project.bgmVolume??.35;
   $('sceneStatus').textContent=`${state.selected+1} / ${state.project.scenes.length}  ${s.name}`;$('timeLabel').textContent=`0.0 / ${s.duration.toFixed(1)} 秒`;$('scrubber').value=0;
+  syncMotionControls(s);
 }
 
 function setupEffectsUI(){const root=$('effectChecks');for(const [key,label] of EFFECTS){const lab=document.createElement('label');lab.className='effect-chip';const cb=document.createElement('input');cb.type='checkbox';cb.dataset.effect=key;cb.onchange=()=>{const s=currentScene();s.effects=[...document.querySelectorAll('[data-effect]:checked')].map(x=>x.dataset.effect);renderSceneList();renderFrame(s,+$('scrubber').value/1000)};lab.append(cb,document.createTextNode(label));root.append(lab)}}
@@ -214,6 +360,99 @@ function inferEffects(text){
   return [...new Set(out)].slice(0,3);
 }
 
+function canvasPoint(event){
+  const rect=canvas.getBoundingClientRect();
+  return {
+    x:(event.clientX-rect.left)*canvas.width/rect.width,
+    y:(event.clientY-rect.top)*canvas.height/rect.height
+  };
+}
+
+async function beginRegionSelection(event){
+  if(!state.selectingRegion||state.selectionSession)return;
+  if(event.pointerType==='mouse'&&event.button!==0)return;
+  event.preventDefault();
+  const scene=currentScene();
+  try{
+    const img=await loadImage(scene.imageObjectUrl||scene.image);
+    if(!state.selectingRegion)return;
+    if(!img)throw new Error('image missing');
+    const t=+$('scrubber').value/1000;
+    const placement=coverPlacement(img,canvas.width,canvas.height,scene,t);
+    const imageSize={width:img.naturalWidth,height:img.naturalHeight};
+    const start=canvasPointToSource(canvasPoint(event),placement,imageSize);
+    state.selectionSession={pointerId:event.pointerId,sceneId:scene.id,start,placement,imageSize};
+    state.selectionDraft={x:start.x,y:start.y,width:0,height:0};
+    canvas.setPointerCapture?.(event.pointerId);
+    await renderFrame(scene,t);
+  }catch{
+    alert('画像を読み込めないため、範囲を選択できません。');
+    setSelectionMode(false);
+  }
+}
+
+function updateRegionSelection(event){
+  const session=state.selectionSession;
+  if(!session||session.pointerId!==event.pointerId||session.sceneId!==currentScene()?.id)return;
+  event.preventDefault();
+  const point=canvasPointToSource(canvasPoint(event),session.placement,session.imageSize);
+  state.selectionDraft=rectFromPoints(session.start,point);
+  renderFrame(currentScene(),+$('scrubber').value/1000);
+}
+
+function finishRegionSelection(event){
+  const session=state.selectionSession;
+  if(!session||session.pointerId!==event.pointerId)return;
+  updateRegionSelection(event);
+  const rect=state.selectionDraft;
+  state.selectionSession=null;
+  if(!rect||rect.width<8||rect.height<8){
+    state.selectionDraft=null;
+    $('selectionNotice').textContent='範囲が小さすぎます。画像の上を、もう少し大きくドラッグしてください。';
+    renderFrame(currentScene(),+$('scrubber').value/1000);
+    return;
+  }
+  const scene=currentScene();
+  const index=(scene.motionRegions||[]).length;
+  const region=normalizeMotionRegion({
+    id:crypto.randomUUID(),
+    name:`動かす範囲 ${index+1}`,
+    enabled:true,
+    zIndex:index,
+    mask:{
+      kind:'rectangle',
+      width:session.imageSize.width,
+      height:session.imageSize.height,
+      rect,
+      feather:6,
+      invert:false
+    },
+    motion:{type:'sway',amplitude:.25,speed:.4,phase:0,axis:'x',pivot:{x:.5,y:1}}
+  },index);
+  scene.motionRegions ||= [];
+  scene.motionRegions.push(region);
+  state.selectedMotionRegionId=region.id;
+  setSelectionMode(false);
+  syncMotionControls(scene);
+  renderFrame(scene,+$('scrubber').value/1000);
+}
+
+function removeCurrentMotionRegion(){
+  const scene=currentScene();
+  const index=(scene.motionRegions||[]).findIndex(region=>region.id===state.selectedMotionRegionId);
+  if(index<0)return;
+  scene.motionRegions.splice(index,1);
+  state.selectedMotionRegionId=scene.motionRegions[Math.min(index,scene.motionRegions.length-1)]?.id||null;
+  syncMotionControls(scene);
+  renderFrame(scene,+$('scrubber').value/1000);
+}
+
+function updateMotionControl(mutator){
+  const region=currentMotionRegion();if(!region)return;
+  mutator(region);
+  renderFrame(currentScene(),+$('scrubber').value/1000);
+}
+
 function bindControls(){
   $('sceneName').oninput=e=>{currentScene().name=e.target.value;renderSceneList()};
   $('narrationText').oninput=e=>{currentScene().narration=e.target.value};
@@ -223,6 +462,21 @@ function bindControls(){
   $('effectStrength').oninput=e=>{currentScene().effectStrength=+e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000)};
   $('autoDurationBtn').onclick=()=>{const s=currentScene();s.duration=estimateDuration(s.narration);$('durationInput').value=s.duration;renderSceneList()};
   $('autoEffectBtn').onclick=()=>{const s=currentScene();s.effects=inferEffects(s.narration);syncControls();renderSceneList();renderFrame(s,0)};
+  $('selectRegionBtn').onclick=()=>{
+    $('selectionNotice').textContent='プレビュー画像の上をドラッグしてください。もう一度ボタンを押すと中止します。';
+    setSelectionMode(!state.selectingRegion);
+  };
+  $('motionRegionSelect').onchange=e=>{state.selectedMotionRegionId=e.target.value;syncMotionControls(currentScene());renderFrame(currentScene(),+$('scrubber').value/1000)};
+  $('motionEnabled').onchange=e=>updateMotionControl(region=>region.enabled=e.target.checked);
+  $('motionTypeSelect').onchange=e=>updateMotionControl(region=>{region.motion.type=e.target.value;region.motion.pivot=e.target.value==='sway'?{x:.5,y:1}:{x:.5,y:.5}});
+  $('motionStrength').oninput=e=>{const value=+e.target.value;$('motionStrengthValue').textContent=`${Math.round(value*100)}%`;updateMotionControl(region=>region.motion.amplitude=value)};
+  $('motionSpeed').oninput=e=>{const value=+e.target.value;$('motionSpeedValue').textContent=`${Math.round(value*100)}%`;updateMotionControl(region=>region.motion.speed=value)};
+  $('previewMotionBtn').onclick=previewCurrentMotion;
+  $('removeRegionBtn').onclick=removeCurrentMotionRegion;
+  canvas.addEventListener('pointerdown',beginRegionSelection);
+  canvas.addEventListener('pointermove',updateRegionSelection);
+  canvas.addEventListener('pointerup',finishRegionSelection);
+  canvas.addEventListener('pointercancel',()=>{state.selectionSession=null;state.selectionDraft=null;renderFrame(currentScene(),+$('scrubber').value/1000)});
   $('scrubber').oninput=e=>{const v=+e.target.value/1000;renderFrame(currentScene(),v);$('timeLabel').textContent=`${(v*currentScene().duration).toFixed(1)} / ${currentScene().duration.toFixed(1)} 秒`};
   $('prevBtn').onclick=()=>selectScene(state.selected-1);$('nextBtn').onclick=()=>selectScene(state.selected+1);
   $('playSceneBtn').onclick=()=>playScenes([state.selected]);$('playAllBtn').onclick=()=>playScenes([...state.project.scenes.keys()]);
@@ -244,9 +498,27 @@ function removeCurrentScene(){if(state.project.scenes.length<=1)return;state.pro
 function addImages(files){for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length)}
 
 function stopPlayback(){state.playToken++;state.playing=false;for(const a of state.audioPreview){try{a.pause()}catch{}}state.audioPreview=[]}
+async function previewCurrentMotion(){
+  if(!currentMotionRegion())return;
+  stopPlayback();const token=state.playToken;state.playing=true;
+  const scene=currentScene(),previewSeconds=Math.min(3.5,scene.duration),started=performance.now();
+  while(token===state.playToken){
+    const elapsed=(performance.now()-started)/1000;
+    const sceneTime=Math.min(elapsed,previewSeconds);
+    const norm=sceneTime/scene.duration;
+    await renderFrame(scene,norm);
+    $('scrubber').value=norm*1000;
+    $('timeLabel').textContent=`${sceneTime.toFixed(1)} / ${scene.duration.toFixed(1)} 秒`;
+    if(elapsed>=previewSeconds)break;
+    await sleep(1000/30);
+  }
+  if(token!==state.playToken)return;
+  state.playing=false;
+  renderFrame(scene,previewSeconds/scene.duration);
+}
 async function playScenes(indices){stopPlayback();const token=state.playToken;state.playing=true;let bgm=null;if(state.bgmFile){bgm=new Audio(URL.createObjectURL(state.bgmFile));bgm.loop=true;bgm.volume=state.project.bgmVolume;bgm.play().catch(()=>{});state.audioPreview.push(bgm)}
   for(const idx of indices){if(token!==state.playToken)return;state.selected=idx;renderSceneList();syncControls();const s=currentScene();const started=performance.now();playSceneAudioPreview(s,bgm);while(token===state.playToken){const elapsed=(performance.now()-started)/1000;const n=Math.min(1,elapsed/s.duration);await renderFrame(s,n);$('scrubber').value=n*1000;$('timeLabel').textContent=`${Math.min(elapsed,s.duration).toFixed(1)} / ${s.duration.toFixed(1)} 秒`;if(n>=1)break;await sleep(1000/30)}}
-  if(bgm)bgm.pause();state.playing=false;
+  if(bgm)bgm.pause();state.playing=false;renderFrame(currentScene(),1);
 }
 function playSceneAudioPreview(s,bgm){
   const files=[s.runtime?.narrationFile,s.runtime?.ambientFile].filter(Boolean);if(bgm)bgm.volume=s.runtime?.narrationFile?state.project.bgmVolume*.42:state.project.bgmVolume;
@@ -261,14 +533,14 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 function serializableProject(){return {...state.project,scenes:state.project.scenes.map(({runtime,imageObjectUrl,...s})=>({...s,imageObjectUrl:null}))}}
 function saveProjectJson(){const blob=new Blob([JSON.stringify(serializableProject(),null,2)],{type:'application/json'});downloadBlob(blob,'stillmotion-project.json')}
-async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(s=>({...s,id:s.id||crypto.randomUUID(),motionRegions:Array.isArray(s.motionRegions)?s.motionRegions:[],runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0)}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
+async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(s=>normalizeSceneMotion({...s,id:s.id||crypto.randomUUID(),runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;state.selectedMotionRegionId=null;setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0)}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
 
 async function decodeFile(ctx,file){if(!file)return null;return ctx.decodeAudioData(await file.arrayBuffer())}
 function makeNoiseBuffer(ctx){const b=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate),d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;return b}
 async function exportWebM(){
   if(!window.MediaRecorder||!canvas.captureStream)return alert('このブラウザでは動画書き出しを使えません。Chrome / Edgeを使ってください。');
-  stopPlayback();$('exportBtn').disabled=true;$('exportStatus').textContent='準備中…';$('exportProgress').value=0;
+  stopPlayback();state.exporting=true;$('exportBtn').disabled=true;$('exportStatus').textContent='準備中…';$('exportProgress').value=0;await renderFrame(currentScene(),0);
   const audioCtx=new AudioContext();const mix=audioCtx.createMediaStreamDestination();const master=audioCtx.createGain();master.gain.value=.92;master.connect(mix);
   const videoStream=canvas.captureStream(state.project.fps||30);const tracks=[...videoStream.getVideoTracks(),...mix.stream.getAudioTracks()];const stream=new MediaStream(tracks);
   const mime=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'].find(MediaRecorder.isTypeSupported)||'';const rec=new MediaRecorder(stream,mime?{mimeType:mime,videoBitsPerSecond:6_000_000}:undefined);const chunks=[];rec.ondataavailable=e=>e.data.size&&chunks.push(e.data);const stopped=new Promise(r=>rec.onstop=r);rec.start(1000);
@@ -287,7 +559,7 @@ async function exportWebM(){
     const start=performance.now();while(true){const elapsed=(performance.now()-start)/1000;const n=Math.min(1,elapsed/s.duration);await renderFrame(s,n);const all=done+Math.min(elapsed,s.duration);$('exportProgress').value=all/total;$('exportStatus').textContent=`書き出し中 ${Math.round(all/total*100)}% — ${i+1}/${state.project.scenes.length}`;if(n>=1)break;await sleep(1000/(state.project.fps||30))}
     done+=s.duration;for(const src of local){try{src.stop()}catch{}}
   }
-  if(bgmSrc)try{bgmSrc.stop()}catch{};rec.stop();await stopped;await audioCtx.close();const blob=new Blob(chunks,{type:mime||'video/webm'});downloadBlob(blob,`${state.project.title||'stillmotion'}.webm`);$('exportStatus').textContent='完了。WebMを保存しました。';$('exportProgress').value=1;$('exportBtn').disabled=false;
+  if(bgmSrc)try{bgmSrc.stop()}catch{};rec.stop();await stopped;await audioCtx.close();const blob=new Blob(chunks,{type:mime||'video/webm'});downloadBlob(blob,`${state.project.title||'stillmotion'}.webm`);state.exporting=false;$('exportStatus').textContent='完了。WebMを保存しました。';$('exportProgress').value=1;$('exportBtn').disabled=false;renderFrame(currentScene(),1);
 }
 
 function init(){setupEffectsUI();bindControls();setResolution('720x960');renderSceneList();syncControls();renderFrame(currentScene(),0)}

@@ -44,6 +44,46 @@ function normalizeRect(rect = {}) {
   };
 }
 
+/** Creates a positive rectangle from two points in the same coordinate space. */
+export function rectFromPoints(start, end) {
+  const x1 = finiteNumber(start?.x, 0);
+  const y1 = finiteNumber(start?.y, 0);
+  const x2 = finiteNumber(end?.x, x1);
+  const y2 = finiteNumber(end?.y, y1);
+
+  return {
+    x: Math.min(x1, x2),
+    y: Math.min(y1, y2),
+    width: Math.abs(x2 - x1),
+    height: Math.abs(y2 - y1)
+  };
+}
+
+/** Maps a Canvas point back to the original image coordinate system. */
+export function canvasPointToSource(point, placement, imageSize) {
+  const scale = Math.max(Number.EPSILON, finiteNumber(placement?.scale, 1));
+  const width = positiveInteger(imageSize?.width, 1);
+  const height = positiveInteger(imageSize?.height, 1);
+
+  return {
+    x: clamp((finiteNumber(point?.x, 0) - finiteNumber(placement?.x, 0)) / scale, 0, width),
+    y: clamp((finiteNumber(point?.y, 0) - finiteNumber(placement?.y, 0)) / scale, 0, height)
+  };
+}
+
+/** Maps an original-image rectangle to its current Canvas placement. */
+export function sourceRectToCanvas(rect, placement) {
+  const normalized = normalizeRect(rect);
+  const scale = Math.max(Number.EPSILON, finiteNumber(placement?.scale, 1));
+
+  return {
+    x: finiteNumber(placement?.x, 0) + normalized.x * scale,
+    y: finiteNumber(placement?.y, 0) + normalized.y * scale,
+    width: normalized.width * scale,
+    height: normalized.height * scale
+  };
+}
+
 function normalizeMask(mask = {}) {
   const kind = MASK_TYPES.includes(mask.kind) ? mask.kind : 'rectangle';
 

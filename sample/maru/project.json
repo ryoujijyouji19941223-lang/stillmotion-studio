@@ -148,7 +148,31 @@
       "textLock": true,
       "effects": ["wind", "leaves"],
       "effectStrength": 0.55,
-      "motionRegions": []
+      "motionRegions": [
+        {
+          "id": "sample-tree-canopy",
+          "name": "木の葉（見本）",
+          "enabled": true,
+          "zIndex": 0,
+          "mask": {
+            "kind": "rectangle",
+            "width": 960,
+            "height": 1440,
+            "rect": { "x": 430, "y": 0, "width": 530, "height": 370 },
+            "source": null,
+            "feather": 12,
+            "invert": false
+          },
+          "motion": {
+            "type": "sway",
+            "amplitude": 0.18,
+            "speed": 0.25,
+            "phase": 0,
+            "axis": "x",
+            "pivot": { "x": 0.82, "y": 1 }
+          }
+        }
+      ]
     },
     {
       "id": "maru-13",

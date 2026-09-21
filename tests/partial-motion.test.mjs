@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  canvasPointToSource,
   IDENTITY_TRANSFORM,
   evaluateMotion,
   motionPeriodSeconds,
   normalizeMotionRegion,
   normalizeSceneMotion,
+  rectFromPoints,
+  sourceRectToCanvas,
   validateMotionRegion
 } from '../src/v0.2/partial-motion.mjs';
 
@@ -86,4 +89,27 @@ test('regions are sorted by zIndex without mutating the source scene', () => {
 
   assert.deepEqual(normalized.motionRegions.map(region => region.id), ['back', 'front']);
   assert.deepEqual(scene.motionRegions.map(region => region.id), ['front', 'back']);
+});
+
+test('a drag in any direction becomes a positive rectangle', () => {
+  assert.deepEqual(
+    rectFromPoints({ x: 80, y: 90 }, { x: 20, y: 30 }),
+    { x: 20, y: 30, width: 60, height: 60 }
+  );
+});
+
+test('source and canvas coordinate mapping round trips', () => {
+  const placement = { x: -20, y: 40, scale: 0.5 };
+  const sourceRect = { x: 100, y: 200, width: 300, height: 400 };
+  const canvasRect = sourceRectToCanvas(sourceRect, placement);
+
+  assert.deepEqual(canvasRect, { x: 30, y: 140, width: 150, height: 200 });
+  assert.deepEqual(
+    canvasPointToSource(
+      { x: canvasRect.x, y: canvasRect.y },
+      placement,
+      { width: 1080, height: 1440 }
+    ),
+    { x: sourceRect.x, y: sourceRect.y }
+  );
 });

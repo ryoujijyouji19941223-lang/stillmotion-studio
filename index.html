@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>StillMotion Studio v0.1</title>
+  <title>StillMotion Studio v0.2 preview</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <h1>StillMotion Studio <span>v0.1</span></h1>
+      <h1>StillMotion Studio <span>v0.2 preview</span></h1>
       <p>静止画に小さな動き・読み上げ・環境音を足して「疑似映像」にする試作機</p>
     </div>
     <div class="top-actions">
@@ -101,6 +101,44 @@
         <label class="check-row"><input id="textLock" type="checkbox" /> 文字保護モード（画像全体は動かさず、上の効果だけ動かす）</label>
       </div>
 
+      <div class="setting-group partial-motion-group">
+        <div class="panel-title-row compact">
+          <div>
+            <h3>部分モーション <span class="preview-badge">試作</span></h3>
+            <p class="setting-help">画像の動かしたい場所を四角く囲みます。</p>
+          </div>
+          <button id="selectRegionBtn" class="primary small">＋ 範囲を選ぶ</button>
+        </div>
+        <div id="selectionNotice" class="selection-notice" hidden>プレビュー画像の上をドラッグしてください。もう一度ボタンを押すと中止します。</div>
+        <div id="motionEmpty" class="empty-state">まだ範囲がありません。</div>
+        <div id="motionEditor" hidden>
+          <label>編集する範囲
+            <select id="motionRegionSelect"></select>
+          </label>
+          <label class="check-row"><input id="motionEnabled" type="checkbox" /> この範囲を動かす</label>
+          <label>動き
+            <select id="motionTypeSelect">
+              <option value="sway">ゆらゆら揺れる</option>
+              <option value="drift">ふわっと移動する</option>
+              <option value="ripple">水面のように伸び縮み</option>
+              <option value="flicker">炎・明かりのように揺らぐ</option>
+              <option value="breathe">呼吸のように動く</option>
+            </select>
+          </label>
+          <label>動きの強さ <output id="motionStrengthValue">25%</output>
+            <input id="motionStrength" type="range" min="0" max="1" step="0.05" />
+          </label>
+          <label>動きの速さ <output id="motionSpeedValue">40%</output>
+            <input id="motionSpeed" type="range" min="0" max="1" step="0.05" />
+          </label>
+          <div class="motion-actions">
+            <button id="previewMotionBtn">▶ 動きを見る</button>
+            <button id="removeRegionBtn" class="danger-button">範囲を削除</button>
+          </div>
+          <p class="setting-help">青い枠は編集用の目印です。動画には入りません。</p>
+        </div>
+      </div>
+
       <div class="setting-group">
         <div class="panel-title-row compact">
           <h3>重ねる効果</h3>
@@ -141,10 +179,10 @@
   </main>
 
   <footer>
-    <strong>v0.1:</strong> 静止画・カメラ・雨/風/葉/光/蝶・読み上げプレビュー・音声アップロード・WebM書き出し・JSON保存まで。
-    <span>次: 範囲選択 → 木やカーテンだけ動かす「レイヤー化」。</span>
+    <strong>v0.2 preview:</strong> 画像上を四角く選び、その範囲だけに小さな動きを付けられます。
+    <span>次: ブラシで木やカーテンの形に沿って選ぶ。</span>
   </footer>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
