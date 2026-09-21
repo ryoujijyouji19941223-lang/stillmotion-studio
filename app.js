@@ -641,6 +641,7 @@ function syncVoiceControls(){
   $('recordNarrationBtn').textContent=recording?'● 録音中…':'● 録音開始';
   $('stopNarrationBtn').disabled=!recording;
   $('previewNarrationBtn').disabled=recording||!file;
+  $('downloadNarrationBtn').disabled=recording||!file;
   $('clearNarrationBtn').disabled=recording||!file;
   $('recordingStatus').textContent=recording?'声を録音しています。読み終わったら「停止」を押してください。':state.voiceMessage||(file?`このシーンでは「${file.name}」を使います。`:'シーンごとにマイクで録音できます。');
 }
@@ -675,6 +676,12 @@ function stopNarrationRecording(){
 function previewNarrationRecording(){
   const file=currentScene()?.runtime?.narrationFile;if(!file)return;
   stopPlayback();const url=URL.createObjectURL(file),audio=new Audio(url);audio.volume=currentScene().narrationVolume??1;audio.onended=()=>URL.revokeObjectURL(url);audio.play().catch(()=>{URL.revokeObjectURL(url);state.voiceMessage='音声を再生できませんでした。';syncVoiceControls()});state.audioPreview.push(audio);
+}
+
+function downloadNarrationRecording(){
+  const file=currentScene()?.runtime?.narrationFile;if(!file)return;
+  downloadBlob(file,file.name||`narration-${currentScene().id.slice(0,8)}.webm`);
+  state.voiceMessage='音声を端末へ保存しました。';syncVoiceControls();
 }
 
 function clearNarrationRecording(){
@@ -874,7 +881,7 @@ function bindControls(){
   $('prevBtn').onclick=()=>selectScene(state.selected-1);$('nextBtn').onclick=()=>selectScene(state.selected+1);
   $('playSceneBtn').onclick=()=>playScenes([state.selected]);$('playAllBtn').onclick=()=>playScenes([...state.project.scenes.keys()]);
   $('speakBtn').onclick=()=>speakCurrent();
-  $('recordNarrationBtn').onclick=startNarrationRecording;$('stopNarrationBtn').onclick=stopNarrationRecording;$('previewNarrationBtn').onclick=previewNarrationRecording;$('clearNarrationBtn').onclick=clearNarrationRecording;
+  $('recordNarrationBtn').onclick=startNarrationRecording;$('stopNarrationBtn').onclick=stopNarrationRecording;$('previewNarrationBtn').onclick=previewNarrationRecording;$('downloadNarrationBtn').onclick=downloadNarrationRecording;$('clearNarrationBtn').onclick=clearNarrationRecording;
   $('narrationAudio').onchange=e=>{ensureRuntime(currentScene()).narrationFile=e.target.files[0]||null;state.voiceMessage=e.target.files[0]?'音声ファイルを設定しました。':'';syncControls()};
   $('ambientAudio').onchange=e=>{ensureRuntime(currentScene()).ambientFile=e.target.files[0]||null;syncControls()};
   $('narrationVolume').oninput=e=>{const value=+e.target.value;currentScene().narrationVolume=value;$('narrationVolumeValue').textContent=`${Math.round(value*100)}%`;queueHistoryCommit()};
