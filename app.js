@@ -40,6 +40,7 @@ function estimateDuration(text){
 
 const state = {
   project: {
+    formatVersion: 1,
     title: 'まると おともだち',
     width: 720,
     height: 960,
@@ -56,6 +57,7 @@ const state = {
       textLock: true,
       effects: SAMPLE_EFFECTS[i],
       effectStrength: i === 15 || i === 16 ? 0.9 : 0.55,
+      motionRegions: [],
       runtime: { narrationFile:null, ambientFile:null }
     }))
   },
@@ -237,9 +239,9 @@ function bindControls(){
 }
 function ensureRuntime(s){if(!s.runtime)s.runtime={narrationFile:null,ambientFile:null};return s.runtime}
 function setResolution(v){const [w,h]=v.split('x').map(Number);state.project.width=w;state.project.height=h;canvas.width=w;canvas.height=h;renderFrame(currentScene(),+$('scrubber').value/1000)}
-function addBlankScene(){state.project.scenes.push({id:crypto.randomUUID(),name:`シーン${state.project.scenes.length+1}`,image:'',imageObjectUrl:null,narration:'',duration:5,camera:'none',textLock:true,effects:[],effectStrength:.55,runtime:{narrationFile:null,ambientFile:null}});selectScene(state.project.scenes.length-1)}
+function addBlankScene(){state.project.scenes.push({id:crypto.randomUUID(),name:`シーン${state.project.scenes.length+1}`,image:'',imageObjectUrl:null,narration:'',duration:5,camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}});selectScene(state.project.scenes.length-1)}
 function removeCurrentScene(){if(state.project.scenes.length<=1)return;state.project.scenes.splice(state.selected,1);state.selected=Math.min(state.selected,state.project.scenes.length-1);selectScene(state.selected)}
-function addImages(files){for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,camera:'none',textLock:true,effects:[],effectStrength:.55,runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length)}
+function addImages(files){for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length)}
 
 function stopPlayback(){state.playToken++;state.playing=false;for(const a of state.audioPreview){try{a.pause()}catch{}}state.audioPreview=[]}
 async function playScenes(indices){stopPlayback();const token=state.playToken;state.playing=true;let bgm=null;if(state.bgmFile){bgm=new Audio(URL.createObjectURL(state.bgmFile));bgm.loop=true;bgm.volume=state.project.bgmVolume;bgm.play().catch(()=>{});state.audioPreview.push(bgm)}
@@ -259,7 +261,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 function serializableProject(){return {...state.project,scenes:state.project.scenes.map(({runtime,imageObjectUrl,...s})=>({...s,imageObjectUrl:null}))}}
 function saveProjectJson(){const blob=new Blob([JSON.stringify(serializableProject(),null,2)],{type:'application/json'});downloadBlob(blob,'stillmotion-project.json')}
-async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.scenes=p.scenes.map(s=>({...s,id:s.id||crypto.randomUUID(),runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0)}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
+async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(s=>({...s,id:s.id||crypto.randomUUID(),motionRegions:Array.isArray(s.motionRegions)?s.motionRegions:[],runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0)}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
 
 async function decodeFile(ctx,file){if(!file)return null;return ctx.decodeAudioData(await file.arrayBuffer())}

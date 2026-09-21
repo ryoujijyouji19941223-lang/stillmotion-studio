@@ -1,0 +1,28 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+
+# Local secrets and settings
+.env
+.env.*
+!.env.example
+*.local.json
+
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+exports/
+tmp/
+temp/
+*.log
+*.webm
+*.mp4
+
+# Local media selected while editing
+local-assets/
+recordings/

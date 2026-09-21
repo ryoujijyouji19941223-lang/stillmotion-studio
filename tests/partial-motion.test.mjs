@@ -1,0 +1,89 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  IDENTITY_TRANSFORM,
+  evaluateMotion,
+  motionPeriodSeconds,
+  normalizeMotionRegion,
+  normalizeSceneMotion,
+  validateMotionRegion
+} from '../src/v0.2/partial-motion.mjs';
+
+test('v0.1 scene gains an empty motionRegions array', () => {
+  const original = { name: '表紙', image: 'sample/maru/01.webp' };
+  const normalized = normalizeSceneMotion(original);
+
+  assert.deepEqual(normalized.motionRegions, []);
+  assert.equal(original.motionRegions, undefined);
+});
+
+test('unsafe numeric inputs are clamped during normalization', () => {
+  const region = normalizeMotionRegion({
+    mask: {
+      kind: 'rectangle',
+      width: 1080,
+      height: 1440,
+      feather: 999,
+      rect: { x: -20, y: -5, width: 200, height: 300 }
+    },
+    motion: {
+      type: 'sway',
+      amplitude: 3,
+      speed: -2,
+      pivot: { x: 2, y: -1 }
+    }
+  });
+
+  assert.equal(region.motion.amplitude, 1);
+  assert.equal(region.motion.speed, 0);
+  assert.deepEqual(region.motion.pivot, { x: 1, y: 0 });
+  assert.equal(region.mask.feather, 128);
+  assert.equal(region.mask.rect.x, 0);
+  assert.equal(region.mask.rect.y, 0);
+});
+
+test('unknown motion type is reported and safely disabled', () => {
+  const input = { motion: { type: 'explode' } };
+  const errors = validateMotionRegion(input);
+  const normalized = normalizeMotionRegion(input);
+
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /explode/);
+  assert.equal(normalized.enabled, false);
+  assert.deepEqual(evaluateMotion(input, 1), IDENTITY_TRANSFORM);
+});
+
+test('the same input and time always produce the same transform', () => {
+  const region = {
+    id: 'tree',
+    motion: { type: 'sway', amplitude: 0.5, speed: 0.3, phase: 0.25 }
+  };
+
+  assert.deepEqual(evaluateMotion(region, 1.25), evaluateMotion(region, 1.25));
+});
+
+test('motion returns to the same transform after one loop period', () => {
+  const region = {
+    motion: { type: 'drift', amplitude: 0.8, speed: 0.6, axis: 'both' }
+  };
+  const period = motionPeriodSeconds(0.6);
+  const start = evaluateMotion(region, 0);
+  const end = evaluateMotion(region, period);
+
+  assert.ok(Math.abs(start.translateX - end.translateX) < 1e-12);
+  assert.ok(Math.abs(start.translateY - end.translateY) < 1e-12);
+});
+
+test('regions are sorted by zIndex without mutating the source scene', () => {
+  const scene = {
+    motionRegions: [
+      { id: 'front', zIndex: 5 },
+      { id: 'back', zIndex: 1 }
+    ]
+  };
+  const normalized = normalizeSceneMotion(scene);
+
+  assert.deepEqual(normalized.motionRegions.map(region => region.id), ['back', 'front']);
+  assert.deepEqual(scene.motionRegions.map(region => region.id), ['front', 'back']);
+});

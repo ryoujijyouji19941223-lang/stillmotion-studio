@@ -1,0 +1,13 @@
+{
+  "name": "stillmotion-studio",
+  "version": "0.2.0-prep",
+  "private": true,
+  "description": "静止画の一部分だけを動かす映像編集ツール",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check app.js && node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
