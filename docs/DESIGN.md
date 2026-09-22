@@ -56,7 +56,7 @@ v0.1は依存ライブラリなしのHTML/CSS/JavaScriptで動く。v0.2プレ�
 }
 ```
 
-v0.2のシーンには、省略可能な `motionRegions` と `imageFit` を追加する。空配列または未指定ならv0.1と同じ描画になる。`imageFit` は `cover`（画面を埋めて端を切る）または `contain`（全体表示＋ぼかし背景）を使う。
+v0.2のシーンには、省略可能な `motionRegions`、`imageFit`、`effectSettings`、`followNarrationDuration` を追加する。未指定ならv0.1の値から安全な初期値を作る。`imageFit` は `cover`（画面を埋めて端を切る）または `contain`（全体表示＋ぼかし背景）を使う。
 
 ```json
 {
@@ -66,6 +66,11 @@ v0.2のシーンには、省略可能な `motionRegions` と `imageFit` を追�
   "camera": "none",
   "textLock": true,
   "effects": ["rain"],
+  "effectSettings": {
+    "rain": { "strength": 0.8, "speed": 0.65 }
+  },
+  "followNarrationDuration": true,
+  "narrationDuration": 7.4,
   "motionRegions": [
     {
       "id": "tree-canopy",
@@ -117,11 +122,13 @@ v0.2のシーンには、省略可能な `motionRegions` と `imageFit` を追�
 - `sfx`: 単発効果音
 - `bgm`: 全体音楽
 
-各シーンに `narrationVolume`、`ambientVolume`、`ambientDuration` を持たせ、音声の種類ごとに音量と再生時間を分離する。
+各シーンに `narrationVolume`、`ambientVolume`、`ambientDuration` を持たせ、音声の種類ごとに音量と再生時間を分離する。録音または読込時に `narrationDuration` を測り、`followNarrationDuration` が有効なら末尾0.4秒の余白を含む表示時間へ自動調整する。
 
 ナレーションは音声ファイルの読込に加え、ブラウザの `MediaRecorder` でマイク録音できる。録音データは実行中のシーンへ紐づけるが、巨大化を避けるためプロジェクトJSONには埋め込まない。
 
 ナレーション中はBGMを20〜40%程度へ下げ、終了後に戻す。音声ファイルはプロジェクトJSONに埋め込まず、相対パスまたは利用時に選択したローカルファイルとして扱う。
+
+L2の重ねる効果は `effectSettings[effectKey]` に `strength` と `speed` を持つ。旧データのシーン共通 `effectStrength` は、効果別設定がない場合の初期値として読み込む。
 
 ## 8. 将来のアダプター境界
 

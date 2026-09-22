@@ -8,11 +8,16 @@ import {
   rectFromPoints,
   sourceRectToCanvas
 } from './src/v0.2/partial-motion.mjs';
+import {
+  durationForNarration,
+  normalizeEffectSettings
+} from './src/v0.2/editor-settings.mjs';
 
 const EFFECTS = [
   ['rain','雨'], ['wind','風'], ['leaves','葉っぱ'], ['glow','木漏れ日'],
   ['butterflies','蝶'], ['sparkles','光の粒'], ['snow','雪'], ['dust','ほこり']
 ];
+const EFFECT_KEYS = EFFECTS.map(([key]) => key);
 
 const SAMPLE_TEXTS = [
   'まると おともだち',
@@ -62,6 +67,8 @@ const state = {
       imageObjectUrl: null,
       narration: text,
       duration: estimateDuration(text),
+      followNarrationDuration: true,
+      narrationDuration: null,
       narrationVolume: 1,
       ambientVolume: 0.55,
       ambientDuration: estimateDuration(text),
@@ -70,6 +77,7 @@ const state = {
       textLock: true,
       effects: SAMPLE_EFFECTS[i],
       effectStrength: i === 15 || i === 16 ? 0.9 : 0.55,
+      effectSettings: {},
       motionRegions: i===11?[{
         id:'sample-tree-canopy',name:'木の葉（見本）',enabled:true,zIndex:0,
         mask:{kind:'rectangle',width:960,height:1440,rect:{x:430,y:0,width:530,height:370},source:null,feather:12,invert:false},
@@ -88,6 +96,7 @@ const state = {
   audioPreview: [],
   generatedAmbient: [],
   selectedMotionRegionId: null,
+  selectedEffectKey: null,
   maskPreview: false,
   selectingRegion: false,
   selectionKind: 'rectangle',
@@ -112,6 +121,15 @@ const ctx = canvas.getContext('2d');
 function currentScene(){ return state.project.scenes[state.selected]; }
 function currentMotionRegion(){
   return (currentScene()?.motionRegions || []).find(region => region.id === state.selectedMotionRegionId) || null;
+}
+
+function ensureEffectSettings(scene){
+  scene.effectSettings=normalizeEffectSettings(scene,EFFECT_KEYS);
+  return scene.effectSettings;
+}
+
+function effectSetting(scene,key){
+  return ensureEffectSettings(scene)[key]||{strength:.55,speed:.5};
 }
 
 function captureHistorySnapshot(){
@@ -415,13 +433,16 @@ function drawPartialMotions(img,scene,placement,elapsedSeconds){
 }
 
 function drawEffects(scene,t,w,h){
-  const P=particleSet(scene), str=scene.effectStrength ?? .55;
+  const P=particleSet(scene);
   for(const effect of scene.effects || []){
+    const setting=effectSetting(scene,effect),str=setting.strength;
+    if(str<=0)continue;
+    const et=t*(.25+setting.speed*1.75);
     ctx.save();
     if(effect==='rain'){
       ctx.strokeStyle=`rgba(205,230,255,${.35+.35*str})`; ctx.lineWidth=Math.max(1,w/520);
       for(const d of P.rain){
-        const y=((d.y+t*d.speed*2)%1)*h, x=((d.x+t*.04)%1)*w;
+        const y=((d.y+et*d.speed*2)%1)*h, x=((d.x+et*.04)%1)*w;
         ctx.globalAlpha=d.alpha*str; ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-w*.008,y+d.len*h);ctx.stroke();
       }
       ctx.globalAlpha=.08*str; ctx.fillStyle='#6da7d9';ctx.fillRect(0,0,w,h);
@@ -429,19 +450,19 @@ function drawEffects(scene,t,w,h){
     if(effect==='wind'){
       ctx.strokeStyle=`rgba(255,255,255,${.22+.35*str})`; ctx.lineWidth=Math.max(1,w/500);
       for(let i=0;i<10;i++){
-        const yy=((i*.103+t*.35)%1)*h; const xx=((t*.9+i*.17)%1)*w-w*.25;
+        const yy=((i*.103+et*.35)%1)*h; const xx=((et*.9+i*.17)%1)*w-w*.25;
         ctx.beginPath();ctx.moveTo(xx,yy);ctx.bezierCurveTo(xx+w*.08,yy-h*.018,xx+w*.17,yy+h*.018,xx+w*.25,yy);ctx.stroke();
       }
     }
     if(effect==='leaves'){
       for(const d of P.leaves){
-        const yy=((d.y+t*d.speed*3)%1)*h; const xx=((d.x+t*d.drift+Math.sin(t*5+d.phase)*.02)%1)*w;
-        ctx.save();ctx.translate(xx,yy);ctx.rotate(d.rot+t*2);ctx.globalAlpha=.45+.45*str;ctx.fillStyle=iColor(d.phase);
+        const yy=((d.y+et*d.speed*3)%1)*h; const xx=((d.x+et*d.drift+Math.sin(et*5+d.phase)*.02)%1)*w;
+        ctx.save();ctx.translate(xx,yy);ctx.rotate(d.rot+et*2);ctx.globalAlpha=.45+.45*str;ctx.fillStyle=iColor(d.phase);
         ctx.beginPath();ctx.ellipse(0,0,d.size*w,d.size*w*.45,0,0,Math.PI*2);ctx.fill();ctx.restore();
       }
     }
     if(effect==='glow'){
-      const pulse=.78+.22*Math.sin(t*Math.PI*2);
+      const pulse=.78+.22*Math.sin(et*Math.PI*2);
       const a=(.13+.13*str)*pulse;
       ctx.globalCompositeOperation='screen';
       const g=ctx.createRadialGradient(w*.72,h*.12,0,w*.72,h*.12,w*.78);g.addColorStop(0,`rgba(255,248,188,${a*1.8})`);g.addColorStop(.42,`rgba(255,225,126,${a*.65})`);g.addColorStop(1,'rgba(255,244,183,0)');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
@@ -451,16 +472,16 @@ function drawEffects(scene,t,w,h){
     }
     if(effect==='sparkles'){
       ctx.globalCompositeOperation='screen';
-      for(let i=0;i<38;i++){const rr=seeded(i*999+hashString(scene.id));const x=rr()*w,y=rr()*h,r=2+rr()*4.5;const a=(.25+.7*Math.abs(Math.sin(t*5+i)))*(.45+.55*str);ctx.fillStyle=`rgba(255,246,173,${a*.32})`;ctx.beginPath();ctx.arc(x,y,r*2.4,0,6.28);ctx.fill();ctx.strokeStyle=`rgba(255,255,224,${a})`;ctx.lineWidth=Math.max(1,w/720);ctx.beginPath();ctx.moveTo(x-r*1.8,y);ctx.lineTo(x+r*1.8,y);ctx.moveTo(x,y-r*1.8);ctx.lineTo(x,y+r*1.8);ctx.stroke();ctx.fillStyle=`rgba(255,255,240,${a})`;ctx.beginPath();ctx.arc(x,y,r*.55,0,6.28);ctx.fill()}
+      for(let i=0;i<38;i++){const rr=seeded(i*999+hashString(scene.id));const x=rr()*w,y=rr()*h,r=2+rr()*4.5;const a=(.25+.7*Math.abs(Math.sin(et*5+i)))*(.45+.55*str);ctx.fillStyle=`rgba(255,246,173,${a*.32})`;ctx.beginPath();ctx.arc(x,y,r*2.4,0,6.28);ctx.fill();ctx.strokeStyle=`rgba(255,255,224,${a})`;ctx.lineWidth=Math.max(1,w/720);ctx.beginPath();ctx.moveTo(x-r*1.8,y);ctx.lineTo(x+r*1.8,y);ctx.moveTo(x,y-r*1.8);ctx.lineTo(x,y+r*1.8);ctx.stroke();ctx.fillStyle=`rgba(255,255,240,${a})`;ctx.beginPath();ctx.arc(x,y,r*.55,0,6.28);ctx.fill()}
     }
     if(effect==='snow'){
-      ctx.fillStyle='white';for(const d of P.snow){const y=((d.y+t*d.speed*2)%1)*h;const x=(d.x+Math.sin(t*4+d.phase)*.02)*w;ctx.globalAlpha=.35+.55*str;ctx.beginPath();ctx.arc(x,y,d.size*w,0,6.28);ctx.fill()}
+      ctx.fillStyle='white';for(const d of P.snow){const y=((d.y+et*d.speed*2)%1)*h;const x=(d.x+Math.sin(et*4+d.phase)*.02)*w;ctx.globalAlpha=.35+.55*str;ctx.beginPath();ctx.arc(x,y,d.size*w,0,6.28);ctx.fill()}
     }
     if(effect==='dust'){
-      ctx.globalCompositeOperation='screen';for(const d of P.dust){const x=(d.x+Math.sin(t*2+d.phase)*.018)*w,y=(d.y+Math.cos(t*1.6+d.phase)*.014)*h;const a=d.alpha*(.4+.75*str);ctx.globalAlpha=a*.28;ctx.fillStyle='#ffe9a8';ctx.beginPath();ctx.arc(x,y,d.size*w*2.3,0,6.28);ctx.fill();ctx.globalAlpha=a;ctx.fillStyle='#fff7d6';ctx.beginPath();ctx.arc(x,y,d.size*w,0,6.28);ctx.fill()}
+      ctx.globalCompositeOperation='screen';for(const d of P.dust){const x=(d.x+Math.sin(et*2+d.phase)*.018)*w,y=(d.y+Math.cos(et*1.6+d.phase)*.014)*h;const a=d.alpha*(.4+.75*str);ctx.globalAlpha=a*.28;ctx.fillStyle='#ffe9a8';ctx.beginPath();ctx.arc(x,y,d.size*w*2.3,0,6.28);ctx.fill();ctx.globalAlpha=a;ctx.fillStyle='#fff7d6';ctx.beginPath();ctx.arc(x,y,d.size*w,0,6.28);ctx.fill()}
     }
     if(effect==='butterflies'){
-      for(const d of P.butterflies){const x=(d.x+Math.sin(t*3+d.phase)*.035)*w,y=(d.y+Math.cos(t*2.2+d.phase)*.025)*h;ctx.save();ctx.translate(x,y);ctx.rotate(Math.sin(t*4+d.phase)*.25);ctx.fillStyle=`rgba(255,211,65,${.55+.35*str})`;const s=d.size*w;ctx.beginPath();ctx.ellipse(-s*.35,0,s*.42,s*.6,-.4,0,6.28);ctx.ellipse(s*.35,0,s*.42,s*.6,.4,0,6.28);ctx.fill();ctx.restore()}
+      for(const d of P.butterflies){const x=(d.x+Math.sin(et*3+d.phase)*.035)*w,y=(d.y+Math.cos(et*2.2+d.phase)*.025)*h;ctx.save();ctx.translate(x,y);ctx.rotate(Math.sin(et*4+d.phase)*.25);ctx.fillStyle=`rgba(255,211,65,${.55+.35*str})`;const s=d.size*w;ctx.beginPath();ctx.ellipse(-s*.35,0,s*.42,s*.6,-.4,0,6.28);ctx.ellipse(s*.35,0,s*.42,s*.6,.4,0,6.28);ctx.fill();ctx.restore()}
     }
     ctx.restore();
   }
@@ -552,7 +573,7 @@ function renderSceneList(){
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 function effectLabel(key){return (EFFECTS.find(x=>x[0]===key)||[key,key])[1]}
 function moveScene(i,d){const j=i+d;if(j<0||j>=state.project.scenes.length)return;const a=state.project.scenes;[a[i],a[j]]=[a[j],a[i]];state.selected=j;renderSceneList();syncControls();renderFrame(currentScene(),0);commitHistory()}
-function selectScene(i){stopNarrationRecording();cancelRegionSelection();state.maskPreview=false;state.selected=Math.max(0,Math.min(i,state.project.scenes.length-1));state.selectedMotionRegionId=null;state.voiceMessage='';stopPlayback();renderSceneList();syncControls();renderFrame(currentScene(),0)}
+function selectScene(i){stopNarrationRecording();cancelRegionSelection();state.maskPreview=false;state.selected=Math.max(0,Math.min(i,state.project.scenes.length-1));state.selectedMotionRegionId=null;state.selectedEffectKey=null;state.voiceMessage='';stopPlayback();renderSceneList();syncControls();renderFrame(currentScene(),0)}
 
 function setMaskPreview(enabled){
   state.maskPreview=!!enabled&&!!currentMotionRegion();
@@ -596,6 +617,8 @@ function syncMotionControls(scene){
   $('motionEditor').hidden=!region;
   if(region){
     select.value=region.id;
+    $('activeMotionRegion').textContent=`いまは「${region.name}」だけを編集中です`;
+    $('motionRegionName').value=region.name||'';
     $('motionEnabled').checked=region.enabled!==false;
     $('backgroundFill').checked=region.backgroundFill!==false;
     $('motionTypeSelect').value=region.motion?.type||'sway';
@@ -619,10 +642,40 @@ function syncMotionControls(scene){
   $('maskPreviewHelp').hidden=!state.maskPreview;
 }
 
+function syncEffectControls(scene){
+  const settings=ensureEffectSettings(scene);
+  const enabled=(scene.effects||[]).filter(key=>EFFECT_KEYS.includes(key));
+  if(!enabled.includes(state.selectedEffectKey))state.selectedEffectKey=enabled[0]||null;
+  const select=$('effectSelect');select.innerHTML='';
+  for(const key of enabled){
+    const option=document.createElement('option');option.value=key;option.textContent=effectLabel(key);select.append(option);
+  }
+  const hasEffect=!!state.selectedEffectKey;
+  $('effectEditor').hidden=!hasEffect;$('effectEmpty').hidden=hasEffect;
+  if(!hasEffect)return;
+  select.value=state.selectedEffectKey;
+  const setting=settings[state.selectedEffectKey];
+  $('effectStrength').value=setting.strength;$('effectSpeed').value=setting.speed;
+  $('effectStrengthValue').textContent=`${Math.round(setting.strength*100)}%`;
+  $('effectSpeedValue').textContent=`${Math.round(setting.speed*100)}%`;
+}
+
+function syncNarrationDurationControls(scene){
+  const seconds=Number(scene.narrationDuration);
+  const hasDuration=Number.isFinite(seconds)&&seconds>0;
+  $('followNarrationDuration').checked=scene.followNarrationDuration!==false;
+  $('fitNarrationDurationBtn').disabled=!hasDuration;
+  const status=$('narrationDurationStatus');status.classList.remove('ready','warning');
+  if(!hasDuration){status.textContent='音声を入れると、ここに声とページの長さが表示されます。';return}
+  const clipped=seconds>scene.duration;
+  status.textContent=`声 ${seconds.toFixed(1)}秒 ／ ページ ${scene.duration.toFixed(1)}秒${clipped?' — 声が途中で切れます':''}`;
+  status.classList.add(clipped?'warning':'ready');
+}
+
 function syncControls(){
   const s=currentScene(); if(!s) return;
   s.ambientDuration=Math.max(.5,Math.min(s.duration,s.ambientDuration??s.duration));
-  $('sceneName').value=s.name||'';$('narrationText').value=s.narration||'';$('durationInput').value=s.duration;$('imageFitSelect').value=s.imageFit==='contain'?'contain':'cover';$('cameraSelect').value=s.camera||'none';$('textLock').checked=!!s.textLock;$('effectStrength').value=s.effectStrength??.55;
+  $('sceneName').value=s.name||'';$('narrationText').value=s.narration||'';$('durationInput').value=s.duration;$('imageFitSelect').value=s.imageFit==='contain'?'contain':'cover';$('cameraSelect').value=s.camera||'none';$('textLock').checked=!!s.textLock;
   [...document.querySelectorAll('[data-effect]')].forEach(el=>el.checked=(s.effects||[]).includes(el.dataset.effect));
   $('narrationAudioName').textContent=s.runtime?.narrationFile?.name||'未設定';$('ambientAudioName').textContent=s.runtime?.ambientFile?.name||'未設定';$('bgmAudioName').textContent=state.bgmFile?.name||'未設定';$('bgmVolume').value=state.project.bgmVolume??.35;
   $('narrationVolume').value=s.narrationVolume??1;$('narrationVolumeValue').textContent=`${Math.round((s.narrationVolume??1)*100)}%`;
@@ -631,6 +684,8 @@ function syncControls(){
   $('sceneStatus').textContent=`${state.selected+1} / ${state.project.scenes.length}  ${s.name}`;$('timeLabel').textContent=`0.0 / ${s.duration.toFixed(1)} 秒`;$('scrubber').value=0;
   syncVoiceControls();
   syncMotionControls(s);
+  syncEffectControls(s);
+  syncNarrationDurationControls(s);
 }
 
 function syncVoiceControls(){
@@ -646,6 +701,51 @@ function syncVoiceControls(){
   $('recordingStatus').textContent=recording?'声を録音しています。読み終わったら「停止」を押してください。':state.voiceMessage||(file?`このシーンでは「${file.name}」を使います。`:'シーンごとにマイクで録音できます。');
 }
 
+function setSceneDuration(scene,duration){
+  const previous=scene.duration;
+  scene.duration=Math.max(1,Math.min(120,+duration||1));
+  if(scene.ambientDuration==null||scene.ambientDuration>=previous)scene.ambientDuration=scene.duration;
+  else scene.ambientDuration=Math.min(scene.ambientDuration,scene.duration);
+}
+
+async function readAudioDuration(file){
+  if(!file)return null;
+  try{
+    const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+    if(AudioContextClass){
+      const audioContext=new AudioContextClass();
+      const buffer=await audioContext.decodeAudioData(await file.arrayBuffer());
+      const duration=buffer.duration;
+      await audioContext.close();
+      if(Number.isFinite(duration)&&duration>0)return duration;
+    }
+  }catch(error){console.warn('audio duration decode',error)}
+  return new Promise(resolve=>{
+    const url=URL.createObjectURL(file),audio=new Audio();
+    const finish=value=>{URL.revokeObjectURL(url);resolve(Number.isFinite(value)&&value>0?value:null)};
+    const timer=setTimeout(()=>finish(null),5000);
+    audio.preload='metadata';audio.onloadedmetadata=()=>{clearTimeout(timer);finish(audio.duration)};audio.onerror=()=>{clearTimeout(timer);finish(null)};audio.src=url;
+  });
+}
+
+function fitNarrationDuration(scene){
+  const fitted=durationForNarration(scene.narrationDuration,.4);
+  if(fitted==null)return false;
+  setSceneDuration(scene,fitted);
+  return true;
+}
+
+async function attachNarrationFile(scene,file,message='音声ファイルを設定しました。'){
+  ensureRuntime(scene).narrationFile=file||null;
+  scene.narrationDuration=file?await readAudioDuration(file):null;
+  const adjusted=file&&scene.followNarrationDuration!==false&&fitNarrationDuration(scene);
+  if(currentScene()?.id===scene.id){
+    state.voiceMessage=file?`${message}${adjusted?` ページを${scene.duration.toFixed(1)}秒に合わせました。`:''}`:'';
+    syncControls();renderSceneList();renderFrame(scene,0);
+  }
+  commitHistory();
+}
+
 async function startNarrationRecording(){
   if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){state.voiceMessage='このブラウザではマイク録音を利用できません。Chrome / Edgeを使ってください。';syncVoiceControls();return}
   try{
@@ -654,13 +754,16 @@ async function startNarrationRecording(){
     const recorder=new MediaRecorder(stream,mimeType?{mimeType}:undefined);
     state.voiceStream=stream;state.voiceRecorder=recorder;state.voiceChunks=[];state.recordingSceneId=currentScene().id;state.voiceMessage='';
     recorder.ondataavailable=event=>{if(event.data.size)state.voiceChunks.push(event.data)};
-    recorder.onstop=()=>{
+    recorder.onstop=async()=>{
       const type=recorder.mimeType||'audio/webm';
       const recordedSceneId=state.recordingSceneId;
       if(state.voiceChunks.length){
         const blob=new Blob(state.voiceChunks,{type});
         const scene=state.project.scenes.find(item=>item.id===recordedSceneId);
-        if(scene){const runtime=ensureRuntime(scene);runtime.narrationFile=new File([blob],`narration-${scene.id.slice(0,8)}.webm`,{type});state.voiceMessage=currentScene()?.id===recordedSceneId?`「${scene.name}」の声を録音しました。`:''}
+        if(scene){
+          const file=new File([blob],`narration-${scene.id.slice(0,8)}.webm`,{type});
+          await attachNarrationFile(scene,file,`「${scene.name}」の声を録音しました。`);
+        }
       }
       for(const track of state.voiceStream?.getTracks()||[])track.stop();
       state.voiceRecorder=null;state.voiceStream=null;state.voiceChunks=[];state.recordingSceneId=null;syncControls();
@@ -685,10 +788,10 @@ function downloadNarrationRecording(){
 }
 
 function clearNarrationRecording(){
-  const runtime=ensureRuntime(currentScene());runtime.narrationFile=null;state.voiceMessage='このシーンの音声を外しました。';syncControls();
+  const scene=currentScene(),runtime=ensureRuntime(scene);runtime.narrationFile=null;scene.narrationDuration=null;state.voiceMessage='このシーンの音声を外しました。';syncControls();commitHistory();
 }
 
-function setupEffectsUI(){const root=$('effectChecks');for(const [key,label] of EFFECTS){const lab=document.createElement('label');lab.className='effect-chip';const cb=document.createElement('input');cb.type='checkbox';cb.dataset.effect=key;cb.onchange=()=>{const s=currentScene();s.effects=[...document.querySelectorAll('[data-effect]:checked')].map(x=>x.dataset.effect);renderSceneList();renderFrame(s,+$('scrubber').value/1000);commitHistory()};lab.append(cb,document.createTextNode(label));root.append(lab)}}
+function setupEffectsUI(){const root=$('effectChecks');for(const [key,label] of EFFECTS){const lab=document.createElement('label');lab.className='effect-chip';const cb=document.createElement('input');cb.type='checkbox';cb.dataset.effect=key;cb.onchange=()=>{const s=currentScene();s.effects=[...document.querySelectorAll('[data-effect]:checked')].map(x=>x.dataset.effect);ensureEffectSettings(s);state.selectedEffectKey=cb.checked?key:(s.effects[0]||null);syncEffectControls(s);renderSceneList();renderFrame(s,+$('scrubber').value/1000);commitHistory()};lab.append(cb,document.createTextNode(label));root.append(lab)}}
 
 function inferEffects(text){
   text=text||'';const out=[];
@@ -801,7 +904,7 @@ function finishRegionSelection(event){
       feather:6,
       invert:false
     },
-    motion:{type:'sway',amplitude:.25,speed:.4,phase:0,axis:'x',pivot:{x:.5,y:1}}
+    motion:{type:'sway',amplitude:.25,speed:.4,phase:(index*.173)%1,axis:'x',pivot:{x:.5,y:1}}
   },index);
   scene.motionRegions ||= [];
   scene.motionRegions.push(region);
@@ -836,12 +939,14 @@ function updateMotionControl(mutator){
 function bindControls(){
   $('sceneName').oninput=e=>{currentScene().name=e.target.value;renderSceneList();queueHistoryCommit()};
   $('narrationText').oninput=e=>{currentScene().narration=e.target.value;queueHistoryCommit()};
-  $('durationInput').oninput=e=>{const scene=currentScene(),previous=scene.duration;scene.duration=Math.max(1,+e.target.value||1);if(scene.ambientDuration==null||scene.ambientDuration>=previous)scene.ambientDuration=scene.duration;else scene.ambientDuration=Math.min(scene.ambientDuration,scene.duration);$('ambientDuration').value=scene.ambientDuration;renderSceneList();queueHistoryCommit()};
+  $('durationInput').oninput=e=>{const scene=currentScene();setSceneDuration(scene,e.target.value);$('ambientDuration').value=scene.ambientDuration;syncNarrationDurationControls(scene);renderSceneList();queueHistoryCommit()};
   $('imageFitSelect').onchange=e=>{currentScene().imageFit=e.target.value==='contain'?'contain':'cover';renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
   $('cameraSelect').onchange=e=>{currentScene().camera=e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
   $('textLock').onchange=e=>{currentScene().textLock=e.target.checked;renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
-  $('effectStrength').oninput=e=>{currentScene().effectStrength=+e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000);queueHistoryCommit()};
-  $('autoDurationBtn').onclick=()=>{const s=currentScene(),previous=s.duration;s.duration=estimateDuration(s.narration);if(s.ambientDuration==null||s.ambientDuration>=previous)s.ambientDuration=s.duration;else s.ambientDuration=Math.min(s.ambientDuration,s.duration);$('durationInput').value=s.duration;$('ambientDuration').value=s.ambientDuration;renderSceneList();commitHistory()};
+  $('effectSelect').onchange=e=>{state.selectedEffectKey=e.target.value;syncEffectControls(currentScene());renderFrame(currentScene(),+$('scrubber').value/1000)};
+  $('effectStrength').oninput=e=>{const value=+e.target.value,key=state.selectedEffectKey;if(!key)return;ensureEffectSettings(currentScene())[key].strength=value;$('effectStrengthValue').textContent=`${Math.round(value*100)}%`;renderFrame(currentScene(),+$('scrubber').value/1000);queueHistoryCommit()};
+  $('effectSpeed').oninput=e=>{const value=+e.target.value,key=state.selectedEffectKey;if(!key)return;ensureEffectSettings(currentScene())[key].speed=value;$('effectSpeedValue').textContent=`${Math.round(value*100)}%`;renderFrame(currentScene(),+$('scrubber').value/1000);queueHistoryCommit()};
+  $('autoDurationBtn').onclick=()=>{const s=currentScene();setSceneDuration(s,estimateDuration(s.narration));$('durationInput').value=s.duration;$('ambientDuration').value=s.ambientDuration;syncNarrationDurationControls(s);renderSceneList();commitHistory()};
   $('autoEffectBtn').onclick=()=>{const s=currentScene();s.effects=inferEffects(s.narration);syncControls();renderSceneList();renderFrame(s,0);commitHistory()};
   $('selectRegionBtn').onclick=()=>{
     const active=state.selectingRegion&&state.selectionKind==='rectangle';
@@ -865,6 +970,7 @@ function bindControls(){
   };
   $('brushSize').oninput=e=>$('brushSizeValue').textContent=`${Math.round(+e.target.value)} px`;
   $('motionRegionSelect').onchange=e=>{state.selectedMotionRegionId=e.target.value;syncMotionControls(currentScene());renderFrame(currentScene(),+$('scrubber').value/1000)};
+  $('motionRegionName').oninput=e=>{const name=e.target.value||'名前なしの範囲';updateMotionControl(region=>region.name=name);const option=[...$('motionRegionSelect').options].find(item=>item.value===state.selectedMotionRegionId);if(option)option.textContent=name;$('activeMotionRegion').textContent=`いまは「${name}」だけを編集中です`;renderSceneList()};
   $('maskPreviewBtn').onclick=()=>{cancelRegionSelection();setMaskPreview(!state.maskPreview)};
   $('motionEnabled').onchange=e=>updateMotionControl(region=>region.enabled=e.target.checked);
   $('backgroundFill').onchange=e=>updateMotionControl(region=>region.backgroundFill=e.target.checked);
@@ -882,7 +988,9 @@ function bindControls(){
   $('playSceneBtn').onclick=()=>playScenes([state.selected]);$('playAllBtn').onclick=()=>playScenes([...state.project.scenes.keys()]);
   $('speakBtn').onclick=()=>speakCurrent();
   $('recordNarrationBtn').onclick=startNarrationRecording;$('stopNarrationBtn').onclick=stopNarrationRecording;$('previewNarrationBtn').onclick=previewNarrationRecording;$('downloadNarrationBtn').onclick=downloadNarrationRecording;$('clearNarrationBtn').onclick=clearNarrationRecording;
-  $('narrationAudio').onchange=e=>{ensureRuntime(currentScene()).narrationFile=e.target.files[0]||null;state.voiceMessage=e.target.files[0]?'音声ファイルを設定しました。':'';syncControls()};
+  $('narrationAudio').onchange=e=>attachNarrationFile(currentScene(),e.target.files[0]||null);
+  $('followNarrationDuration').onchange=e=>{currentScene().followNarrationDuration=e.target.checked;if(e.target.checked&&fitNarrationDuration(currentScene())){syncControls();renderSceneList()}commitHistory()};
+  $('fitNarrationDurationBtn').onclick=()=>{const scene=currentScene();if(!fitNarrationDuration(scene))return;state.voiceMessage=`ページを声に合わせて${scene.duration.toFixed(1)}秒にしました。`;syncControls();renderSceneList();commitHistory()};
   $('ambientAudio').onchange=e=>{ensureRuntime(currentScene()).ambientFile=e.target.files[0]||null;syncControls()};
   $('narrationVolume').oninput=e=>{const value=+e.target.value;currentScene().narrationVolume=value;$('narrationVolumeValue').textContent=`${Math.round(value*100)}%`;queueHistoryCommit()};
   $('ambientVolume').oninput=e=>{const value=+e.target.value;currentScene().ambientVolume=value;$('ambientVolumeValue').textContent=`${Math.round(value*100)}%`;queueHistoryCommit()};
@@ -899,9 +1007,9 @@ function bindControls(){
 }
 function ensureRuntime(s){if(!s.runtime)s.runtime={narrationFile:null,ambientFile:null};return s.runtime}
 function setResolution(v){const [w,h]=v.split('x').map(Number);state.project.width=w;state.project.height=h;canvas.width=w;canvas.height=h;renderFrame(currentScene(),+$('scrubber').value/1000)}
-function addBlankScene(){state.project.scenes.push({id:crypto.randomUUID(),name:`シーン${state.project.scenes.length+1}`,image:'',imageObjectUrl:null,narration:'',duration:5,narrationVolume:1,ambientVolume:.55,ambientDuration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}});selectScene(state.project.scenes.length-1);commitHistory()}
+function addBlankScene(){state.project.scenes.push({id:crypto.randomUUID(),name:`シーン${state.project.scenes.length+1}`,image:'',imageObjectUrl:null,narration:'',duration:5,followNarrationDuration:true,narrationDuration:null,narrationVolume:1,ambientVolume:.55,ambientDuration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,effectSettings:{},motionRegions:[],runtime:{narrationFile:null,ambientFile:null}});selectScene(state.project.scenes.length-1);commitHistory()}
 function removeCurrentScene(){if(state.project.scenes.length<=1)return;state.project.scenes.splice(state.selected,1);state.selected=Math.min(state.selected,state.project.scenes.length-1);selectScene(state.selected);commitHistory()}
-function addImages(files){if(!files.length)return;for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,narrationVolume:1,ambientVolume:.55,ambientDuration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,motionRegions:[],runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length);commitHistory()}
+function addImages(files){if(!files.length)return;for(const f of files){const url=URL.createObjectURL(f);state.project.scenes.push({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),image:'',imageObjectUrl:url,narration:'',duration:5,followNarrationDuration:true,narrationDuration:null,narrationVolume:1,ambientVolume:.55,ambientDuration:5,imageFit:'cover',camera:'none',textLock:true,effects:[],effectStrength:.55,effectSettings:{},motionRegions:[],runtime:{narrationFile:null,ambientFile:null}})}selectScene(state.project.scenes.length-files.length);commitHistory()}
 
 function stopPlayback(){state.playToken++;state.playing=false;for(const a of state.audioPreview){try{a.pause()}catch{}}state.audioPreview=[];for(const src of state.generatedAmbient){try{src.stop()}catch{}}state.generatedAmbient=[]}
 async function previewCurrentMotion(){
@@ -944,7 +1052,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 function serializableProject(){return {...state.project,scenes:state.project.scenes.map(({runtime,imageObjectUrl,...s})=>({...s,imageObjectUrl:null}))}}
 function saveProjectJson(){const blob=new Blob([JSON.stringify(serializableProject(),null,2)],{type:'application/json'});downloadBlob(blob,'stillmotion-project.json')}
-async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(s=>normalizeSceneMotion({...s,id:s.id||crypto.randomUUID(),imageFit:s.imageFit==='contain'?'contain':'cover',narrationVolume:Number.isFinite(+s.narrationVolume)?Math.max(0,Math.min(1,+s.narrationVolume)):1,ambientVolume:Number.isFinite(+s.ambientVolume)?Math.max(0,Math.min(1,+s.ambientVolume)):.55,ambientDuration:Number.isFinite(+s.ambientDuration)?Math.max(.5,Math.min(+s.duration||5,+s.ambientDuration)):(+s.duration||5),runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null}));state.project={...state.project,...p};state.selected=0;state.selectedMotionRegionId=null;state.maskCache.clear();setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0);resetHistory()}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
+async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(raw=>{const s=normalizeSceneMotion({...raw,id:raw.id||crypto.randomUUID(),imageFit:raw.imageFit==='contain'?'contain':'cover',followNarrationDuration:raw.followNarrationDuration!==false,narrationDuration:Number.isFinite(+raw.narrationDuration)&&+raw.narrationDuration>0?+raw.narrationDuration:null,narrationVolume:Number.isFinite(+raw.narrationVolume)?Math.max(0,Math.min(1,+raw.narrationVolume)):1,ambientVolume:Number.isFinite(+raw.ambientVolume)?Math.max(0,Math.min(1,+raw.ambientVolume)):.55,ambientDuration:Number.isFinite(+raw.ambientDuration)?Math.max(.5,Math.min(+raw.duration||5,+raw.ambientDuration)):(+raw.duration||5),runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null});s.effectSettings=normalizeEffectSettings(s,EFFECT_KEYS);return s});state.project={...state.project,...p};state.selected=0;state.selectedMotionRegionId=null;state.selectedEffectKey=null;state.maskCache.clear();setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0);resetHistory()}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
 
 async function decodeFile(ctx,file){if(!file)return null;return ctx.decodeAudioData(await file.arrayBuffer())}

@@ -89,6 +89,9 @@
           <button id="autoDurationBtn">自動</button>
         </div>
       </div>
+      <label class="check-row duration-follow-row"><input id="followNarrationDuration" type="checkbox" checked /> 声を入れたら、その長さにページを自動調整する</label>
+      <div id="narrationDurationStatus" class="duration-status">音声を入れると、ここに声とページの長さが表示されます。</div>
+      <button id="fitNarrationDurationBtn" class="wide-button" disabled>声の長さに合わせ直す</button>
 
       <div class="setting-group">
         <h3>画像の動き</h3>
@@ -125,8 +128,12 @@
         <div id="selectionNotice" class="selection-notice" hidden>プレビュー画像の上をドラッグしてください。もう一度ボタンを押すと中止します。</div>
         <div id="motionEmpty" class="empty-state">まだ範囲がありません。</div>
         <div id="motionEditor" hidden>
-          <label>編集する範囲
+          <div id="activeMotionRegion" class="active-edit-notice"></div>
+          <label>一つずつ編集する範囲
             <select id="motionRegionSelect"></select>
+          </label>
+          <label>この範囲の名前
+            <input id="motionRegionName" type="text" placeholder="例：髪、木の葉、右手" />
           </label>
           <button id="maskPreviewBtn" class="wide-button">◐ マスクだけ確認</button>
           <p id="maskPreviewHelp" class="mask-preview-help" hidden>白い部分だけが動きます。黒い部分は固定されます。</p>
@@ -172,9 +179,19 @@
           <button id="autoEffectBtn" class="small">文章から提案</button>
         </div>
         <div id="effectChecks" class="effect-grid"></div>
-        <label>効果の強さ
-          <input id="effectStrength" type="range" min="0" max="1" step="0.05" />
-        </label>
+        <div id="effectEditor" class="effect-editor" hidden>
+          <label>一つずつ設定する効果
+            <select id="effectSelect"></select>
+          </label>
+          <label>この効果の強さ <output id="effectStrengthValue">55%</output>
+            <input id="effectStrength" type="range" min="0" max="1" step="0.05" />
+          </label>
+          <label>この効果の速さ <output id="effectSpeedValue">50%</output>
+            <input id="effectSpeed" type="range" min="0" max="1" step="0.05" />
+          </label>
+          <p class="setting-help">上で選んだ効果だけを変更します。他の効果の設定は変わりません。</p>
+        </div>
+        <div id="effectEmpty" class="empty-state">効果を選ぶと、強さと速さを別々に設定できます。</div>
       </div>
 
       <div class="setting-group">

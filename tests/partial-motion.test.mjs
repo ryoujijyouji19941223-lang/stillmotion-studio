@@ -14,6 +14,11 @@ import {
   sourceRectToCanvas,
   validateMotionRegion
 } from '../src/v0.2/partial-motion.mjs';
+import {
+  durationForNarration,
+  fitSceneToNarration,
+  normalizeEffectSettings
+} from '../src/v0.2/editor-settings.mjs';
 
 test('freehand polygon points are normalized and bounded', () => {
   const region = normalizeMotionRegion({
@@ -140,6 +145,33 @@ test('unknown motion type is reported and safely disabled', () => {
   assert.match(errors[0], /explode/);
   assert.equal(normalized.enabled, false);
   assert.deepEqual(evaluateMotion(input, 1), IDENTITY_TRANSFORM);
+});
+
+test('older scene-wide effect strength becomes the default for each effect', () => {
+  const settings = normalizeEffectSettings({ effectStrength: 0.7 }, ['rain', 'dust']);
+  assert.deepEqual(settings, {
+    rain: { strength: 0.7, speed: 0.5 },
+    dust: { strength: 0.7, speed: 0.5 }
+  });
+});
+
+test('effect strength and speed are kept separately for every effect', () => {
+  const settings = normalizeEffectSettings({
+    effectSettings: {
+      rain: { strength: 0.9, speed: 0.8 },
+      dust: { strength: 0.25, speed: 0.15 }
+    }
+  }, ['rain', 'dust']);
+  assert.deepEqual(settings.rain, { strength: 0.9, speed: 0.8 });
+  assert.deepEqual(settings.dust, { strength: 0.25, speed: 0.15 });
+});
+
+test('scene duration follows narration with a short safety tail', () => {
+  assert.equal(durationForNarration(7.34), 7.8);
+  assert.deepEqual(fitSceneToNarration({ duration: 5 }, 7.34), {
+    duration: 7.8,
+    narrationDuration: 7.3
+  });
 });
 
 test('the same input and time always produce the same transform', () => {
