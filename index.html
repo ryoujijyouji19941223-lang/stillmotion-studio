@@ -101,17 +101,18 @@
             <option value="contain">全体を表示（ぼかし背景つき）</option>
           </select>
         </label>
-        <label>カメラ
+        <label>画像全体のカメラ移動
           <select id="cameraSelect">
-            <option value="none">固定</option>
-            <option value="zoom-in">ゆっくり寄る</option>
-            <option value="zoom-out">ゆっくり引く</option>
-            <option value="pan-left">左へパン</option>
-            <option value="pan-right">右へパン</option>
-            <option value="float">ごく小さく漂う</option>
+            <option value="none">動かさない</option>
+            <option value="zoom-in">画像全体をゆっくり拡大する</option>
+            <option value="zoom-out">画像全体をゆっくり縮小する</option>
+            <option value="pan-left">画像全体を右から左へ動かす</option>
+            <option value="pan-right">画像全体を左から右へ動かす</option>
+            <option value="float">画像全体を小さく漂わせる</option>
           </select>
         </label>
-        <label class="check-row"><input id="textLock" type="checkbox" /> 文字保護モード（画像全体は動かさず、上の効果だけ動かす）</label>
+        <div id="cameraNotice" class="camera-notice"></div>
+        <label class="check-row"><input id="textLock" type="checkbox" /> 文字を守るため、画像全体は動かさない</label>
       </div>
 
       <div class="setting-group partial-motion-group">
@@ -150,13 +151,21 @@
             </label>
             <p class="setting-help">緑は追加、赤は削除です。間違えたら上の「戻す」で取り消せます。</p>
           </div>
-          <label>動き
+          <label>この範囲の動き
             <select id="motionTypeSelect">
-              <option value="sway">ゆらゆら揺れる</option>
-              <option value="drift">ふわっと移動する</option>
+              <option value="sway">振り子のように揺れる</option>
+              <option value="drift">位置がふわっと往復する</option>
               <option value="ripple">水面のように伸び縮み</option>
-              <option value="flicker">炎・明かりのように揺らぐ</option>
-              <option value="breathe">呼吸のように動く</option>
+              <option value="flicker">炎・光のように明滅する</option>
+              <option value="breathe">呼吸のように膨らむ</option>
+            </select>
+          </label>
+          <p id="motionTypeHelp" class="motion-type-help"></p>
+          <label id="motionAxisRow">動く方向
+            <select id="motionAxisSelect">
+              <option value="x">左右</option>
+              <option value="y">上下</option>
+              <option value="both">斜め（左右＋上下）</option>
             </select>
           </label>
           <label>動きの強さ <output id="motionStrengthValue">25%</output>

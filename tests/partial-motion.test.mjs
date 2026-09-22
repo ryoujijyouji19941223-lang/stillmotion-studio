@@ -183,6 +183,21 @@ test('the same input and time always produce the same transform', () => {
   assert.deepEqual(evaluateMotion(region, 1.25), evaluateMotion(region, 1.25));
 });
 
+test('sway direction can be changed from tilting to vertical movement', () => {
+  const horizontal = evaluateMotion({ motion: { type: 'sway', axis: 'x', amplitude: 1, phase: 0.25 } }, 0);
+  const vertical = evaluateMotion({ motion: { type: 'sway', axis: 'y', amplitude: 1, phase: 0.25 } }, 0);
+  assert.ok(horizontal.rotation > 0);
+  assert.equal(horizontal.translateY, 0);
+  assert.equal(vertical.rotation, 0);
+  assert.ok(vertical.translateY > 0);
+});
+
+test('breathing motion is visibly larger at full strength', () => {
+  const transform = evaluateMotion({ motion: { type: 'breathe', amplitude: 1, phase: 0.25 } }, 0);
+  assert.equal(transform.scaleX, 1.012);
+  assert.equal(transform.scaleY, 1.035);
+});
+
 test('motion returns to the same transform after one loop period', () => {
   const region = {
     motion: { type: 'drift', amplitude: 0.8, speed: 0.6, axis: 'both' }

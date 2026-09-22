@@ -18,6 +18,21 @@ const EFFECTS = [
   ['butterflies','蝶'], ['sparkles','光の粒'], ['snow','雪'], ['dust','ほこり']
 ];
 const EFFECT_KEYS = EFFECTS.map(([key]) => key);
+const CAMERA_HELP = {
+  none:'画像全体は固定します。選択した部分や雨・光などの効果だけが動きます。',
+  'zoom-in':'ページの最初から最後に向かって、画像全体を少しずつ拡大します。',
+  'zoom-out':'ページの最初から最後に向かって、画像全体を少しずつ縮小します。',
+  'pan-left':'ページの間に、画像全体を右側から左側へゆっくり動かします。',
+  'pan-right':'ページの間に、画像全体を左側から右側へゆっくり動かします。',
+  float:'画像全体を上下左右へごく小さく漂わせます。'
+};
+const MOTION_HELP = {
+  sway:'左右なら傾く動き、上下なら上下運動、斜めなら両方を組み合わせます。木、髪、しっぽ向けです。',
+  drift:'選んだ部分の位置そのものが、選んだ方向へゆっくり往復します。雲、霧、小物向けです。',
+  ripple:'横に広がりながら縦に縮む動きを繰り返します。水面や布向けです。',
+  flicker:'大きさと透明度が細かく変わります。炎、照明、光向けです。',
+  breathe:'縦方向を中心に、ゆっくり膨らんだり縮んだりします。胸や胴体向けです。'
+};
 
 const SAMPLE_TEXTS = [
   'まると おともだち',
@@ -239,8 +254,8 @@ function coverPlacement(img,w,h,scene,t){
   const dw=sw*scale, dh=sh*scale;
   let x=(w-dw)/2, y=(h-dh)/2;
   if(!scene.textLock){
-    if(scene.camera==='pan-left') dx = (t-.5)*w*.055;
-    if(scene.camera==='pan-right') dx = (.5-t)*w*.055;
+    if(scene.camera==='pan-left') dx = (.5-t)*w*.055;
+    if(scene.camera==='pan-right') dx = (t-.5)*w*.055;
     if(scene.camera==='float'){dx=Math.sin(t*Math.PI*2)*w*.008;dy=Math.cos(t*Math.PI*2)*h*.006}
   }
   return {x:x+dx,y:y+dy,width:dw,height:dh,scale};
@@ -622,10 +637,14 @@ function syncMotionControls(scene){
     $('motionEnabled').checked=region.enabled!==false;
     $('backgroundFill').checked=region.backgroundFill!==false;
     $('motionTypeSelect').value=region.motion?.type||'sway';
+    $('motionAxisSelect').value=region.motion?.axis||'x';
     $('motionStrength').value=region.motion?.amplitude??.25;
     $('motionSpeed').value=region.motion?.speed??.4;
     $('motionStrengthValue').textContent=`${Math.round((region.motion?.amplitude??.25)*100)}%`;
     $('motionSpeedValue').textContent=`${Math.round((region.motion?.speed??.4)*100)}%`;
+    const motionType=region.motion?.type||'sway';
+    $('motionTypeHelp').textContent=MOTION_HELP[motionType]||'';
+    $('motionAxisRow').hidden=!['sway','drift'].includes(motionType);
   }
   canvas.classList.toggle('selecting-region',state.selectingRegion);
   $('selectRegionBtn').textContent=state.selectingRegion&&state.selectionKind==='rectangle'?'選択をやめる':'＋ 四角で選ぶ';
@@ -640,6 +659,15 @@ function syncMotionControls(scene){
   $('maskPreviewBtn').textContent=state.maskPreview?'画像表示に戻る':'◐ マスクだけ確認';
   $('maskPreviewBtn').classList.toggle('primary',state.maskPreview);
   $('maskPreviewHelp').hidden=!state.maskPreview;
+}
+
+function syncCameraControls(scene){
+  const locked=!!scene.textLock;
+  $('cameraSelect').disabled=locked;
+  const notice=$('cameraNotice');notice.classList.toggle('locked',locked);
+  notice.textContent=locked
+    ?'いまは「文字を守る」がオンなので、画像全体のカメラ移動は停止しています。使う場合は下のチェックを外してください。'
+    :(CAMERA_HELP[scene.camera||'none']||CAMERA_HELP.none);
 }
 
 function syncEffectControls(scene){
@@ -684,6 +712,7 @@ function syncControls(){
   $('sceneStatus').textContent=`${state.selected+1} / ${state.project.scenes.length}  ${s.name}`;$('timeLabel').textContent=`0.0 / ${s.duration.toFixed(1)} 秒`;$('scrubber').value=0;
   syncVoiceControls();
   syncMotionControls(s);
+  syncCameraControls(s);
   syncEffectControls(s);
   syncNarrationDurationControls(s);
 }
@@ -941,8 +970,8 @@ function bindControls(){
   $('narrationText').oninput=e=>{currentScene().narration=e.target.value;queueHistoryCommit()};
   $('durationInput').oninput=e=>{const scene=currentScene();setSceneDuration(scene,e.target.value);$('ambientDuration').value=scene.ambientDuration;syncNarrationDurationControls(scene);renderSceneList();queueHistoryCommit()};
   $('imageFitSelect').onchange=e=>{currentScene().imageFit=e.target.value==='contain'?'contain':'cover';renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
-  $('cameraSelect').onchange=e=>{currentScene().camera=e.target.value;renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
-  $('textLock').onchange=e=>{currentScene().textLock=e.target.checked;renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
+  $('cameraSelect').onchange=e=>{currentScene().camera=e.target.value;syncCameraControls(currentScene());renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
+  $('textLock').onchange=e=>{currentScene().textLock=e.target.checked;syncCameraControls(currentScene());renderFrame(currentScene(),+$('scrubber').value/1000);commitHistory()};
   $('effectSelect').onchange=e=>{state.selectedEffectKey=e.target.value;syncEffectControls(currentScene());renderFrame(currentScene(),+$('scrubber').value/1000)};
   $('effectStrength').oninput=e=>{const value=+e.target.value,key=state.selectedEffectKey;if(!key)return;ensureEffectSettings(currentScene())[key].strength=value;$('effectStrengthValue').textContent=`${Math.round(value*100)}%`;renderFrame(currentScene(),+$('scrubber').value/1000);queueHistoryCommit()};
   $('effectSpeed').oninput=e=>{const value=+e.target.value,key=state.selectedEffectKey;if(!key)return;ensureEffectSettings(currentScene())[key].speed=value;$('effectSpeedValue').textContent=`${Math.round(value*100)}%`;renderFrame(currentScene(),+$('scrubber').value/1000);queueHistoryCommit()};
@@ -974,7 +1003,8 @@ function bindControls(){
   $('maskPreviewBtn').onclick=()=>{cancelRegionSelection();setMaskPreview(!state.maskPreview)};
   $('motionEnabled').onchange=e=>updateMotionControl(region=>region.enabled=e.target.checked);
   $('backgroundFill').onchange=e=>updateMotionControl(region=>region.backgroundFill=e.target.checked);
-  $('motionTypeSelect').onchange=e=>updateMotionControl(region=>{region.motion.type=e.target.value;region.motion.pivot=e.target.value==='sway'?{x:.5,y:1}:{x:.5,y:.5}});
+  $('motionTypeSelect').onchange=e=>{updateMotionControl(region=>{region.motion.type=e.target.value;region.motion.pivot=e.target.value==='sway'?{x:.5,y:1}:{x:.5,y:.5}});syncMotionControls(currentScene())};
+  $('motionAxisSelect').onchange=e=>updateMotionControl(region=>region.motion.axis=e.target.value);
   $('motionStrength').oninput=e=>{const value=+e.target.value;$('motionStrengthValue').textContent=`${Math.round(value*100)}%`;updateMotionControl(region=>region.motion.amplitude=value)};
   $('motionSpeed').oninput=e=>{const value=+e.target.value;$('motionSpeedValue').textContent=`${Math.round(value*100)}%`;updateMotionControl(region=>region.motion.speed=value)};
   $('previewMotionBtn').onclick=previewCurrentMotion;

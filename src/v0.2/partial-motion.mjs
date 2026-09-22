@@ -279,7 +279,12 @@ export function evaluateMotion(regionInput, elapsedSeconds) {
 
   switch (motion.type) {
     case 'sway':
-      transform.rotation = wave * strength * 4;
+      if (motion.axis === 'x' || motion.axis === 'both') {
+        transform.rotation = wave * strength * 4;
+      }
+      if (motion.axis === 'y' || motion.axis === 'both') {
+        transform.translateY = wave * strength * 0.018;
+      }
       break;
     case 'drift': {
       const distance = wave * strength * 0.025;
@@ -288,16 +293,16 @@ export function evaluateMotion(regionInput, elapsedSeconds) {
       break;
     }
     case 'ripple':
-      transform.scaleX = 1 + wave * strength * 0.008;
-      transform.scaleY = 1 - wave * strength * 0.004;
+      transform.scaleX = 1 + wave * strength * 0.025;
+      transform.scaleY = 1 - wave * strength * 0.012;
       break;
     case 'flicker':
-      transform.scaleX = transform.scaleY = 1 + pulse * strength * 0.012;
-      transform.opacity = 1 - (1 - pulse) * strength * 0.12;
+      transform.scaleX = transform.scaleY = 1 + pulse * strength * 0.025;
+      transform.opacity = 1 - (1 - pulse) * strength * 0.22;
       break;
     case 'breathe':
-      transform.scaleX = 1 + wave * strength * 0.006;
-      transform.scaleY = 1 + wave * strength * 0.015;
+      transform.scaleX = 1 + wave * strength * 0.012;
+      transform.scaleY = 1 + wave * strength * 0.035;
       break;
   }
 
