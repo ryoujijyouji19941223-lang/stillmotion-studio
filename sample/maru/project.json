@@ -36,7 +36,7 @@
       "image": "sample/maru/03.webp",
       "narration": "きょうも まるは、\nるんるん こうえんへ\nむかいます。\n\n「みんなと あそぶの、\nたのしみだな！」",
       "duration": 9.7,
-      "imageFit": "contain",
+      "imageFit": "cover",
       "camera": "none",
       "textLock": true,
       "effects": ["glow"],

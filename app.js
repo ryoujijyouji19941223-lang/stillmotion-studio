@@ -87,7 +87,7 @@ const state = {
       narrationVolume: 1,
       ambientVolume: 0.55,
       ambientDuration: estimateDuration(text),
-      imageFit: i === 2 ? 'contain' : 'cover',
+      imageFit: 'cover',
       camera: 'none',
       textLock: true,
       effects: SAMPLE_EFFECTS[i],
