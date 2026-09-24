@@ -12,6 +12,7 @@ import {
   durationForNarration,
   normalizeEffectSettings
 } from './src/v0.2/editor-settings.mjs';
+import { readWorkZip, writeWorkZip } from './src/v0.2/work-archive.mjs';
 
 const EFFECTS = [
   ['rain','雨'], ['wind','風'], ['leaves','葉っぱ'], ['glow','木漏れ日'],
@@ -1030,6 +1031,9 @@ function bindControls(){
   $('resolutionSelect').onchange=e=>{setResolution(e.target.value);commitHistory()};
   $('removeSceneBtn').onclick=removeCurrentScene;$('addSceneBtn').onclick=addBlankScene;
   $('importImagesBtn').onclick=()=>$('imageInput').click();$('imageInput').onchange=e=>addImages([...e.target.files]);
+  $('saveWorkBtn').onclick=saveWorkArchive;
+  $('openWorkBtn').onclick=()=>$('workInput').click();
+  $('workInput').onchange=async e=>{const file=e.target.files[0];e.target.value='';if(file)await loadWorkArchive(file)};
   $('saveProjectBtn').onclick=saveProjectJson;$('importProjectBtn').onclick=()=>$('projectInput').click();$('projectInput').onchange=e=>loadProjectJson(e.target.files[0]);
   $('undoBtn').onclick=undo;$('redoBtn').onclick=redo;
   document.addEventListener('keydown',event=>{const tag=document.activeElement?.tagName;if(['INPUT','TEXTAREA','SELECT'].includes(tag))return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();event.shiftKey?redo():undo()}else if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='y'){event.preventDefault();redo()}});
@@ -1082,8 +1086,93 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 function serializableProject(){return {...state.project,scenes:state.project.scenes.map(({runtime,imageObjectUrl,...s})=>({...s,imageObjectUrl:null}))}}
 function saveProjectJson(){const blob=new Blob([JSON.stringify(serializableProject(),null,2)],{type:'application/json'});downloadBlob(blob,'stillmotion-project.json')}
+
+function mediaEntry(index,kind,file){
+  const name=file?.name||`${kind}-${index+1}`;
+  const ext=name.match(/\.[a-zA-Z0-9]{1,8}$/)?.[0]||(kind==='image'?'.png':'.bin');
+  return {path:`media/${String(index+1).padStart(3,'0')}-${kind}${ext}`,name,type:file.type|| (kind==='image'?'image/png':'application/octet-stream')};
+}
+
+async function saveWorkArchive(){
+  if(state.voiceRecorder?.state==='recording')return alert('先に声の録音を停止してください。');
+  const button=$('saveWorkBtn');button.disabled=true;$('workStatus').textContent='画像と音声をまとめています…';
+  try{
+    const project=serializableProject();
+    const manifest={format:'stillmotion-work',version:1,project,selected:state.selected,assets:{scenes:[],bgm:null}};
+    const entries=[];
+    for(const [index,scene] of state.project.scenes.entries()){
+      const assets={image:null,narration:null,ambient:null};
+      const source=scene.imageObjectUrl||scene.image;
+      if(source){
+        let image;
+        try{const response=await fetch(source);if(!response.ok)throw new Error('missing');image=await response.blob();if(!image.size)throw new Error('empty')}
+        catch{throw new Error(`${index+1}ページ目の画像を読めません。画像をもう一度追加してください。`)}
+        const extension={'image/jpeg':'.jpg','image/png':'.png','image/webp':'.webp','image/gif':'.gif','image/avif':'.avif','image/svg+xml':'.svg'}[image.type];
+        if(!extension)throw new Error(`${index+1}ページ目の画像の形式を確認できません。画像をもう一度追加してください。`);
+        const name=scene.imageObjectUrl?`page-${index+1}${extension}`:source.split('/').pop().split('?')[0];
+        const meta=mediaEntry(index,'image',{name,type:image.type});
+        assets.image=meta;entries.push({path:meta.path,blob:image});
+      }
+      for(const kind of ['narration','ambient']){
+        const file=scene.runtime?.[`${kind}File`];if(!file)continue;
+        const meta=mediaEntry(index,kind,file);assets[kind]=meta;entries.push({path:meta.path,blob:file});
+      }
+      manifest.assets.scenes.push(assets);
+    }
+    if(state.bgmFile){
+      const meta=mediaEntry(state.project.scenes.length,'bgm',state.bgmFile);
+      manifest.assets.bgm=meta;entries.push({path:meta.path,blob:state.bgmFile});
+    }
+    entries.unshift({path:'project.json',blob:new Blob([JSON.stringify(manifest)],{type:'application/json'})});
+    const archive=await writeWorkZip(entries);
+    downloadBlob(archive,'stillmotion-editable.zip');
+    $('workStatus').textContent='編集用ZIPのダウンロードを開始しました。保存したファイルは次回「編集用ZIPを開く」から読み込めます。';
+  }catch(error){$('workStatus').textContent=`保存できませんでした: ${error.message}`}
+  finally{button.disabled=false}
+}
+
+async function loadWorkArchive(file){
+  if(state.voiceRecorder?.state==='recording')return alert('先に声の録音を停止してください。');
+  const button=$('openWorkBtn');button.disabled=true;$('workStatus').textContent='編集用ZIPを読み込んでいます…';
+  const urls=[];let applied=false;
+  try{
+    const files=await readWorkZip(file);
+    const manifestBytes=files.get('project.json');
+    if(!manifestBytes)throw new Error('project.json がありません。完成動画のZIPは読み込めません。');
+    const manifest=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(manifestBytes));
+    if(manifest.format!=='stillmotion-work'||manifest.version!==1||!Array.isArray(manifest.project?.scenes)||!manifest.project.scenes.length||!Array.isArray(manifest.assets?.scenes)||manifest.assets.scenes.length!==manifest.project.scenes.length)throw new Error('StillMotion Studioの編集用ZIPではありません。');
+    const loadMedia=(meta,kind)=>{
+      if(meta==null)return null;
+      if(typeof meta.path!=='string'||!/^media\/[a-zA-Z0-9._-]+$/.test(meta.path)||typeof meta.name!=='string'||typeof meta.type!=='string'||!meta.type.startsWith(kind+'/')||!files.has(meta.path))throw new Error('ZIP内の画像か音声が不足しています。');
+      return new File([files.get(meta.path)],meta.name,{type:meta.type});
+    };
+    const scenes=manifest.project.scenes.map((raw,index)=>{
+      const assets=manifest.assets.scenes[index];if(!assets||typeof assets!=='object')throw new Error('シーンの素材一覧が正しくありません。');
+      const image=loadMedia(assets.image,'image');
+      const narrationFile=loadMedia(assets.narration,'audio');
+      const ambientFile=loadMedia(assets.ambient,'audio');
+      const imageObjectUrl=image?URL.createObjectURL(image):null;if(imageObjectUrl)urls.push(imageObjectUrl);
+      if(raw.image&&!image)throw new Error(`${index+1}ページ目の画像が入っていません。`);
+      return {...raw,imageObjectUrl,runtime:{narrationFile,ambientFile}};
+    });
+    const bgm=loadMedia(manifest.assets.bgm,'audio');
+    const project={...manifest.project,scenes};
+    if(!window.confirm('現在の編集内容を置き換えて、このZIPの続きを開きますか？\n未保存の変更があれば先に「編集用ZIPを保存」してください。')){
+      urls.forEach(url=>URL.revokeObjectURL(url));$('workStatus').textContent='読み込みを中止しました。';return;
+    }
+    const oldUrls=state.project.scenes.map(scene=>scene.imageObjectUrl).filter(Boolean);
+    stopPlayback();state.project=project;applied=true;state.project.scenes=scenes.map(scene=>normalizeSceneMotion({...scene,imageFit:scene.imageFit==='contain'?'contain':'cover'}));
+    state.bgmFile=bgm;state.selected=Math.max(0,Math.min(Number(manifest.selected)||0,scenes.length-1));
+    state.selectedMotionRegionId=null;state.selectedEffectKey=null;state.voiceMessage='';state.images.clear();state.particles.clear();state.maskCache.clear();state.maskPreview=false;setSelectionMode(false);
+    setResolution(`${project.width||720}x${project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0);resetHistory();
+    oldUrls.forEach(url=>URL.revokeObjectURL(url));
+    $('workStatus').textContent='編集用ZIPを開きました。画像と音声も復元しました。';
+  }catch(error){if(!applied)urls.forEach(url=>URL.revokeObjectURL(url));$('workStatus').textContent=`開けませんでした: ${error.message}`}
+  finally{button.disabled=false}
+}
+
 async function loadProjectJson(file){if(!file)return;try{const p=JSON.parse(await file.text());if(!Array.isArray(p.scenes))throw new Error('scenes がありません');p.formatVersion=Number.isFinite(+p.formatVersion)?+p.formatVersion:1;p.scenes=p.scenes.map(raw=>{const s=normalizeSceneMotion({...raw,id:raw.id||crypto.randomUUID(),imageFit:raw.imageFit==='contain'?'contain':'cover',followNarrationDuration:raw.followNarrationDuration!==false,narrationDuration:Number.isFinite(+raw.narrationDuration)&&+raw.narrationDuration>0?+raw.narrationDuration:null,narrationVolume:Number.isFinite(+raw.narrationVolume)?Math.max(0,Math.min(1,+raw.narrationVolume)):1,ambientVolume:Number.isFinite(+raw.ambientVolume)?Math.max(0,Math.min(1,+raw.ambientVolume)):.55,ambientDuration:Number.isFinite(+raw.ambientDuration)?Math.max(.5,Math.min(+raw.duration||5,+raw.ambientDuration)):(+raw.duration||5),runtime:{narrationFile:null,ambientFile:null},imageObjectUrl:null});s.effectSettings=normalizeEffectSettings(s,EFFECT_KEYS);return s});state.project={...state.project,...p};state.selected=0;state.selectedMotionRegionId=null;state.selectedEffectKey=null;state.maskCache.clear();setResolution(`${state.project.width||720}x${state.project.height||960}`);renderSceneList();syncControls();renderFrame(currentScene(),0);resetHistory()}catch(e){alert('JSONを読み込めませんでした: '+e.message)}}
-function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}
+function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),60000)}
 
 async function decodeFile(ctx,file){if(!file)return null;return ctx.decodeAudioData(await file.arrayBuffer())}
 function makeNoiseBuffer(ctx){const b=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate),d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;return b}

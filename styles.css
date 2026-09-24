@@ -22,6 +22,7 @@ button.small{padding:4px 9px}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 22px;border-bottom:1px solid var(--line);background:#151a22;position:sticky;top:0;z-index:10}
 h1{font-size:22px;margin:0 0 4px} h1 span{font-size:13px;color:var(--accent)}
 .topbar p{margin:0;color:var(--muted);font-size:13px}.top-actions,.history-actions{display:flex;gap:8px;flex-wrap:wrap}.history-actions{padding-right:8px;border-right:1px solid var(--line)}
+.work-status{padding:8px 22px;background:#172633;border-bottom:1px solid var(--line);color:#d3e5f2;font-size:13px;line-height:1.45}
 .layout{display:grid;grid-template-columns:260px minmax(450px,1fr) 340px;gap:12px;padding:12px;min-height:calc(100vh - 145px)}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px;min-width:0}
 .panel h2{font-size:16px;margin:0 0 10px}.panel h3{font-size:14px;margin:0 0 9px}.panel-title-row{display:flex;justify-content:space-between;align-items:center;gap:10px}.panel-title-row.compact{margin-bottom:7px}

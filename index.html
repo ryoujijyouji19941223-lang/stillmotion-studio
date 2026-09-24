@@ -19,11 +19,15 @@
       </div>
       <button id="importImagesBtn">画像を追加</button>
       <input id="imageInput" type="file" accept="image/*" multiple hidden />
+      <button id="openWorkBtn">編集用ZIPを開く</button>
+      <input id="workInput" type="file" accept=".zip,application/zip" hidden />
+      <button id="saveWorkBtn" class="primary">編集用ZIPを保存</button>
       <button id="importProjectBtn">JSON読込</button>
       <input id="projectInput" type="file" accept="application/json,.json" hidden />
       <button id="saveProjectBtn">JSON保存</button>
     </div>
   </header>
+  <div id="workStatus" class="work-status" role="status" aria-live="polite">編集用ZIPなら、画像・録音・環境音・BGMも一緒に保存できます。動画（WebM）は編集データとして開けません。</div>
 
   <main class="layout">
     <aside class="scenes-panel panel">
