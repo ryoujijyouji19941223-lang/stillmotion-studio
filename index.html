@@ -3,23 +3,31 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>StillMotion Studio v0.1</title>
+  <title>StillMotion Studio v0.2 preview</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <h1>StillMotion Studio <span>v0.1</span></h1>
+      <h1>StillMotion Studio <span>v0.2 preview</span></h1>
       <p>静止画に小さな動き・読み上げ・環境音を足して「疑似映像」にする試作機</p>
     </div>
     <div class="top-actions">
+      <div class="history-actions" aria-label="編集履歴">
+        <button id="undoBtn" title="ひとつ前に戻す" disabled>↶ 戻す</button>
+        <button id="redoBtn" title="やり直す" disabled>↷ やり直す</button>
+      </div>
       <button id="importImagesBtn">画像を追加</button>
       <input id="imageInput" type="file" accept="image/*" multiple hidden />
+      <button id="openWorkBtn">編集用ZIPを開く</button>
+      <input id="workInput" type="file" accept=".zip,application/zip" hidden />
+      <button id="saveWorkBtn" class="primary">編集用ZIPを保存</button>
       <button id="importProjectBtn">JSON読込</button>
       <input id="projectInput" type="file" accept="application/json,.json" hidden />
       <button id="saveProjectBtn">JSON保存</button>
     </div>
   </header>
+  <div id="workStatus" class="work-status" role="status" aria-live="polite">編集用ZIPなら、画像・録音・環境音・BGMも一緒に保存できます。動画（WebM）は編集データとして開けません。</div>
 
   <main class="layout">
     <aside class="scenes-panel panel">
@@ -85,20 +93,97 @@
           <button id="autoDurationBtn">自動</button>
         </div>
       </div>
+      <label class="check-row duration-follow-row"><input id="followNarrationDuration" type="checkbox" checked /> 声を入れたら、その長さにページを自動調整する</label>
+      <div id="narrationDurationStatus" class="duration-status">音声を入れると、ここに声とページの長さが表示されます。</div>
+      <button id="fitNarrationDurationBtn" class="wide-button" disabled>声の長さに合わせ直す</button>
 
       <div class="setting-group">
         <h3>画像の動き</h3>
-        <label>カメラ
-          <select id="cameraSelect">
-            <option value="none">固定</option>
-            <option value="zoom-in">ゆっくり寄る</option>
-            <option value="zoom-out">ゆっくり引く</option>
-            <option value="pan-left">左へパン</option>
-            <option value="pan-right">右へパン</option>
-            <option value="float">ごく小さく漂う</option>
+        <label>画像の表示
+          <select id="imageFitSelect">
+            <option value="cover">画面いっぱい（端が切れることがあります）</option>
+            <option value="contain">全体を表示（ぼかし背景つき）</option>
           </select>
         </label>
-        <label class="check-row"><input id="textLock" type="checkbox" /> 文字保護モード（画像全体は動かさず、上の効果だけ動かす）</label>
+        <label>画像全体のカメラ移動
+          <select id="cameraSelect">
+            <option value="none">動かさない</option>
+            <option value="zoom-in">画像全体をゆっくり拡大する</option>
+            <option value="zoom-out">画像全体をゆっくり縮小する</option>
+            <option value="pan-left">画像全体を右から左へ動かす</option>
+            <option value="pan-right">画像全体を左から右へ動かす</option>
+            <option value="float">画像全体を小さく漂わせる</option>
+          </select>
+        </label>
+        <div id="cameraNotice" class="camera-notice"></div>
+        <label class="check-row"><input id="textLock" type="checkbox" /> 文字を守るため、画像全体は動かさない</label>
+      </div>
+
+      <div class="setting-group partial-motion-group">
+        <div class="panel-title-row compact">
+          <div>
+            <h3>部分モーション <span class="preview-badge">試作</span></h3>
+            <p class="setting-help">四角、または輪郭をなぞって動かす場所を選びます。</p>
+          </div>
+        </div>
+        <div class="selection-actions">
+          <button id="selectRegionBtn" class="small">＋ 四角で選ぶ</button>
+          <button id="selectFreeRegionBtn" class="small">＋ 自由に囲む</button>
+        </div>
+        <div id="selectionNotice" class="selection-notice" hidden>プレビュー画像の上をドラッグしてください。もう一度ボタンを押すと中止します。</div>
+        <div id="motionEmpty" class="empty-state">まだ範囲がありません。</div>
+        <div id="motionEditor" hidden>
+          <div id="activeMotionRegion" class="active-edit-notice"></div>
+          <label>一つずつ編集する範囲
+            <select id="motionRegionSelect"></select>
+          </label>
+          <label>この範囲の名前
+            <input id="motionRegionName" type="text" placeholder="例：髪、木の葉、右手" />
+          </label>
+          <button id="maskPreviewBtn" class="wide-button">◐ マスクだけ確認</button>
+          <p id="maskPreviewHelp" class="mask-preview-help" hidden>白い部分だけが動きます。黒い部分は固定されます。</p>
+          <label class="check-row"><input id="motionEnabled" type="checkbox" /> この範囲を動かす</label>
+          <label class="check-row"><input id="backgroundFill" type="checkbox" checked /> 動いた跡を周囲の色でぼかして隠す</label>
+          <div class="brush-editor">
+            <div class="setting-subtitle">選択範囲を微調整</div>
+            <div class="selection-actions">
+              <button id="addBrushBtn" class="small">＋ ブラシで足す</button>
+              <button id="eraseBrushBtn" class="small erase-button">－ ブラシで消す</button>
+            </div>
+            <label>ブラシサイズ <output id="brushSizeValue">36 px</output>
+              <input id="brushSize" type="range" min="8" max="180" value="36" step="4" />
+            </label>
+            <p class="setting-help">緑は追加、赤は削除です。間違えたら上の「戻す」で取り消せます。</p>
+          </div>
+          <label>この範囲の動き
+            <select id="motionTypeSelect">
+              <option value="sway">振り子のように揺れる</option>
+              <option value="drift">位置がふわっと往復する</option>
+              <option value="ripple">水面のように伸び縮み</option>
+              <option value="flicker">炎・光のように明滅する</option>
+              <option value="breathe">呼吸のように膨らむ</option>
+            </select>
+          </label>
+          <p id="motionTypeHelp" class="motion-type-help"></p>
+          <label id="motionAxisRow">動く方向
+            <select id="motionAxisSelect">
+              <option value="x">左右</option>
+              <option value="y">上下</option>
+              <option value="both">斜め（左右＋上下）</option>
+            </select>
+          </label>
+          <label>動きの強さ <output id="motionStrengthValue">25%</output>
+            <input id="motionStrength" type="range" min="0" max="1" step="0.05" />
+          </label>
+          <label>動きの速さ <output id="motionSpeedValue">40%</output>
+            <input id="motionSpeed" type="range" min="0" max="1" step="0.05" />
+          </label>
+          <div class="motion-actions">
+            <button id="previewMotionBtn">▶ 動きを見る</button>
+            <button id="removeRegionBtn" class="danger-button">範囲を削除</button>
+          </div>
+          <p class="setting-help">青い枠は編集用の目印です。動画には入りません。</p>
+        </div>
       </div>
 
       <div class="setting-group">
@@ -107,22 +192,55 @@
           <button id="autoEffectBtn" class="small">文章から提案</button>
         </div>
         <div id="effectChecks" class="effect-grid"></div>
-        <label>効果の強さ
-          <input id="effectStrength" type="range" min="0" max="1" step="0.05" />
-        </label>
+        <div id="effectEditor" class="effect-editor" hidden>
+          <label>一つずつ設定する効果
+            <select id="effectSelect"></select>
+          </label>
+          <label>この効果の強さ <output id="effectStrengthValue">55%</output>
+            <input id="effectStrength" type="range" min="0" max="1" step="0.05" />
+          </label>
+          <label>この効果の速さ <output id="effectSpeedValue">50%</output>
+            <input id="effectSpeed" type="range" min="0" max="1" step="0.05" />
+          </label>
+          <p class="setting-help">上で選んだ効果だけを変更します。他の効果の設定は変わりません。</p>
+        </div>
+        <div id="effectEmpty" class="empty-state">効果を選ぶと、強さと速さを別々に設定できます。</div>
       </div>
 
       <div class="setting-group">
         <h3>音</h3>
         <button id="speakBtn">🔊 ブラウザ音声で試聴</button>
+        <div class="voice-recorder">
+          <div class="setting-subtitle">自分の声を入れる</div>
+          <div class="recording-actions">
+            <button id="recordNarrationBtn">● 録音開始</button>
+            <button id="stopNarrationBtn" disabled>■ 停止</button>
+          </div>
+          <div class="recording-actions recording-actions-three">
+            <button id="previewNarrationBtn" disabled>▶ 音声を聞く</button>
+            <button id="downloadNarrationBtn" disabled>↓ 端末へ保存</button>
+            <button id="clearNarrationBtn" class="danger-button" disabled>音声を外す</button>
+          </div>
+          <p id="recordingStatus" class="setting-help">シーンごとにマイクで録音できます。</p>
+        </div>
         <label>ナレーション音声ファイル
           <input id="narrationAudio" type="file" accept="audio/*" />
         </label>
         <div id="narrationAudioName" class="muted">未設定</div>
+        <label>ナレーション音量 <output id="narrationVolumeValue">100%</output>
+          <input id="narrationVolume" type="range" min="0" max="1" value="1" step="0.05" />
+        </label>
         <label>このシーンの効果音 / 環境音
           <input id="ambientAudio" type="file" accept="audio/*" />
         </label>
         <div id="ambientAudioName" class="muted">未設定</div>
+        <label>環境音量 <output id="ambientVolumeValue">55%</output>
+          <input id="ambientVolume" type="range" min="0" max="1" value="0.55" step="0.05" />
+        </label>
+        <label>環境音を鳴らす長さ（秒）
+          <input id="ambientDuration" type="number" min="0.5" max="120" value="5" step="0.5" />
+        </label>
+        <p class="setting-help">雨・風の自動音と、読み込んだ環境音の両方に適用します。</p>
       </div>
 
       <div class="setting-group">
@@ -141,10 +259,10 @@
   </main>
 
   <footer>
-    <strong>v0.1:</strong> 静止画・カメラ・雨/風/葉/光/蝶・読み上げプレビュー・音声アップロード・WebM書き出し・JSON保存まで。
-    <span>次: 範囲選択 → 木やカーテンだけ動かす「レイヤー化」。</span>
+    <strong>v0.2 preview:</strong> 自由選択をブラシで直し、画像の一部分だけに小さな動きを付けられます。
+    <span>操作は「戻す／やり直す」で修正できます。</span>
   </footer>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
